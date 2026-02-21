@@ -55,7 +55,7 @@ colA, colB = st.columns(2)
 with colA:
     loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
 with colB:
-    qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+    qty = st.number_input("Quantity", min_value=1, step=1, value=1, key="qty_input")
 
 st.markdown("<br>", unsafe_allow_html=True) # Adds a little spacing
 
@@ -65,19 +65,47 @@ existing_models = []
 if not df_log.empty and "Model" in df_log.columns:
     existing_models = sorted(df_log['Model'].dropna().unique().tolist())
 
+# --- NEW AUTO-CLEARING LOGIC ---
+if "model_input" not in st.session_state:
+    st.session_state.model_input = ""
+if "quick_select" not in st.session_state:
+    st.session_state.quick_select = "-- Type/Scan New Model Below --"
+
+def on_dropdown_change():
+    # If I select something from the dropdown, clear out the text box!
+    if st.session_state.quick_select != "-- Type/Scan New Model Below --":
+        st.session_state.model_input = ""
+
+def on_text_change():
+    # If I type something into the text box, reset the dropdown!
+    if st.session_state.model_input.strip():
+        st.session_state.quick_select = "-- Type/Scan New Model Below --"
+
 # The dropdown (Only shows if we have history)
 model_selected = None
 if existing_models:
-    model_selected = st.selectbox("📋 Quick Select Existing Model:", ["-- Type/Scan New Model Below --"] + existing_models)
+    options = ["-- Type/Scan New Model Below --"] + existing_models
+    model_selected = st.selectbox(
+        "📋 Quick Select Existing Model:", 
+        options,
+        key="quick_select",
+        on_change=on_dropdown_change
+    )
 
 # The text box NEVER disappears now!
-model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...").upper().strip()
+model_typed_raw = st.text_input(
+    "⌨️ Type or Scan Model ⬇️", 
+    placeholder="Type or scan model...",
+    key="model_input",
+    on_change=on_text_change
+)
+model_typed = model_typed_raw.upper().strip()
 
-# Logic: Typed text ALWAYS overrides the dropdown selection
-if model_typed:
-    model = model_typed
-elif model_selected and model_selected != "-- Type/Scan New Model Below --":
+# Logic: Prioritize Dropdown if it's used, otherwise use Typed Text
+if model_selected and model_selected != "-- Type/Scan New Model Below --":
     model = model_selected
+elif model_typed:
+    model = model_typed
 else:
     model = ""
 
@@ -106,6 +134,12 @@ def modify_inventory(direction):
     with st.spinner("Saving to Google Sheets..."):
         conn.update(worksheet="Sheet1", data=updated_df)
         st.cache_data.clear() # Clear memory so it refreshes perfectly
+        
+        # --- Snap back to Ready Stance (Reset the form) ---
+        st.session_state.qty_input = 1
+        st.session_state.model_input = ""
+        st.session_state.quick_select = "-- Type/Scan New Model Below --"
+        
         st.rerun()
 
 def undo_last():

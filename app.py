@@ -65,18 +65,21 @@ existing_models = []
 if not df_log.empty and "Model" in df_log.columns:
     existing_models = sorted(df_log['Model'].dropna().unique().tolist())
 
+# The dropdown (Only shows if we have history)
+model_selected = None
 if existing_models:
-    # We have history! Give them a searchable dropdown that includes a "Type New" option
-    options = ["✨ TYPE NEW MODEL ✨"] + existing_models
-    selected_option = st.selectbox("Select Existing or Type New ⬇️", options)
-    
-    if selected_option == "✨ TYPE NEW MODEL ✨":
-        model = st.text_input("Enter New Model Number", placeholder="Type or scan...").upper().strip()
-    else:
-        model = selected_option
+    model_selected = st.selectbox("📋 Quick Select Existing Model:", ["-- Type/Scan New Model Below --"] + existing_models)
+
+# The text box NEVER disappears now!
+model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...").upper().strip()
+
+# Logic: Typed text ALWAYS overrides the dropdown selection
+if model_typed:
+    model = model_typed
+elif model_selected and model_selected != "-- Type/Scan New Model Below --":
+    model = model_selected
 else:
-    # First time using the app (or empty database), just show the text box
-    model = st.text_input("Model Number ⬇️", placeholder="Type or scan model...").upper().strip()
+    model = ""
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):

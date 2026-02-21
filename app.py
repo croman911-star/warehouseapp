@@ -36,25 +36,25 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def fetch_data():
     try:
         df = conn.read(worksheet="Sheet1")
-        # Ensure it's a DataFrame and not None
-        if df is None:
+        # Ensure it's a valid DataFrame
+        if df is None or not isinstance(df, pd.DataFrame):
             return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
-        # If the sheet is empty or columns are missing, return a clean slate
-        if df.empty or "Model" not in df.columns:
+        # If columns are missing, return a clean slate
+        if "Model" not in df.columns:
             return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
         return df
     except Exception as e:
-        # Instead of returning the exception object, we return it in a way we can check
-        return {"error": str(e)}
+        # Return the error as a string so we can handle it gracefully
+        return str(e)
 
 data_result = fetch_data()
 
-# Logic to handle if the fetch failed
-if isinstance(data_result, dict) and "error" in data_result:
+# Logic to handle if the fetch failed (The Iron Guard)
+if isinstance(data_result, str):
     st.error("⚠️ Connection issues or Speed Limit reached.")
     st.info("Wait 30-60 seconds and refresh the page.")
     with st.expander("Show Error Details"):
-        st.write(data_result["error"])
+        st.write(data_result)
     st.stop()
 else:
     df_log = data_result
@@ -78,23 +78,27 @@ def safe_update(dataframe):
                 raise e
     return False
 
-# --- STICKY LOCATION (Outside the form so it doesn't reset) ---
+# --- STICKY LOCATION ---
 loc = st.selectbox("📍 Current Location", ["Warehouse", "Assembly", "Suspect"])
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- INPUT FORM (The Disciplined Stance) ---
+# --- INPUT FORM ---
+# We use a try/except block inside the form to ensure it ALWAYS renders the submit button
 with st.form("inventory_form", clear_on_submit=True):
     qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
     # Robust Model Selection Logic
     existing_models = []
-    # Only try to extract models if the DataFrame exists and has data
-    if isinstance(df_log, pd.DataFrame) and not df_log.empty and "Model" in df_log.columns:
-        # Safety check: dropna() removes empty rows, unique() prevents duplicates
-        existing_models = sorted(df_log['Model'].dropna().unique().tolist())
+    try:
+        if not df_log.empty and "Model" in df_log.columns:
+            # dropna() removes empty rows, unique() prevents duplicates
+            models_list = df_log['Model'].dropna().unique().tolist()
+            existing_models = sorted([str(m) for m in models_list])
+    except Exception:
+        existing_models = []
 
-    options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
+    options = ["-- Type/Scan New Model Below --"] + existing_models
 
     model_selected = st.selectbox("📋 Quick Select Existing Model:", options)
     model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...").upper().strip()
@@ -142,7 +146,7 @@ with st.form("inventory_form", clear_on_submit=True):
                 else:
                     st.error("Google's speed limit is active. Wait 1 min.")
 
-# --- Undo Button (Outside the form) ---
+# --- Undo Button ---
 if st.button("↺ Undo Last Entry", use_container_width=True):
     if df_log.empty:
         st.warning("Nothing to undo!")
@@ -162,24 +166,27 @@ st.subheader("📊 Live List")
 
 report_rows = []
 if not df_log.empty:
-    # Ensure data types are correct for grouping
-    df_calc = df_log.copy()
-    df_calc['Quantity'] = pd.to_numeric(df_calc['Quantity'], errors='coerce').fillna(0)
-    
-    summary = df_calc.groupby(['Model', 'Location'])['Quantity'].sum().reset_index()
-    unique_models = sorted(summary['Model'].unique())
-    
-    for m in unique_models:
-        model_data = summary[summary['Model'] == m]
-        wh = model_data[model_data['Location'] == 'Warehouse']['Quantity'].sum()
-        asm = model_data[model_data['Location'] == 'Assembly']['Quantity'].sum()
-        susp = model_data[model_data['Location'] == 'Suspect']['Quantity'].sum()
-        total = wh + asm
+    try:
+        # Ensure data types are correct for grouping
+        df_calc = df_log.copy()
+        df_calc['Quantity'] = pd.to_numeric(df_calc['Quantity'], errors='coerce').fillna(0)
         
-        if total != 0 or susp != 0:
-            report_rows.append({
-                "Model": m, "Warehouse": int(wh), "Assembly": int(asm), "Total": int(total), "Suspect": int(susp)
-            })
+        summary = df_calc.groupby(['Model', 'Location'])['Quantity'].sum().reset_index()
+        unique_models = sorted(summary['Model'].unique())
+        
+        for m in unique_models:
+            model_data = summary[summary['Model'] == m]
+            wh = model_data[model_data['Location'] == 'Warehouse']['Quantity'].sum()
+            asm = model_data[model_data['Location'] == 'Assembly']['Quantity'].sum()
+            susp = model_data[model_data['Location'] == 'Suspect']['Quantity'].sum()
+            total = wh + asm
+            
+            if total != 0 or susp != 0:
+                report_rows.append({
+                    "Model": m, "Warehouse": int(wh), "Assembly": int(asm), "Total": int(total), "Suspect": int(susp)
+                })
+    except Exception:
+        st.warning("Data sync in progress... refresh if list doesn't appear.")
 
 if report_rows:
     df_display = pd.DataFrame(report_rows)
@@ -191,7 +198,7 @@ if report_rows:
     csv = df_display.to_csv(index=False).encode('utf-8')
     st.download_button(label="📥 DOWNLOAD EXCEL", data=csv, file_name=f"Inventory_{datetime.now().strftime('%H%M')}.csv", mime="text/csv")
 else:
-    st.info("List is empty.")
+    st.info("List is empty or loading.")
 
 # --- History Log ---
 with st.expander("Show History"):

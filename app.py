@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import traceback
 from streamlit_gsheets import GSheetsConnection
 
 # --- Page Setup ---
@@ -39,7 +40,9 @@ try:
         df_log = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
 except Exception as e:
     st.error("⚠️ Could not connect to Google Sheets. Please verify your Streamlit Secrets!")
-    st.error(f"Error Details: {e}")
+    st.error(f"Error Summary: {repr(e)}")
+    with st.expander("🔍 See Full Technical Error (Copy this for me!)"):
+        st.code(traceback.format_exc())
     st.stop()
 
 # --- Header ---

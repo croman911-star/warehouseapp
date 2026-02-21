@@ -32,7 +32,7 @@ if not st.session_state.authenticated:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- QUOTA DEFENSE: Caching the Read ---
-@st.cache_data(ttl=15) # Increased TTL slightly to save quota
+@st.cache_data(ttl=15)
 def fetch_data():
     try:
         df = conn.read(worksheet="Sheet1")
@@ -51,49 +51,9 @@ if isinstance(data_result, Exception):
 else:
     df_log = data_result
 
-# --- Form Reset Logic (The Ready Stance) ---
-def reset_form():
-    st.session_state.qty_input = 1
-    st.session_state.text_input = ""
-    st.session_state.select_input = "-- Type/Scan New Model Below --"
-
-# Initialize state keys
-if "qty_input" not in st.session_state:
-    st.session_state.qty_input = 1
-if "text_input" not in st.session_state:
-    st.session_state.text_input = ""
-if "select_input" not in st.session_state:
-    st.session_state.select_input = "-- Type/Scan New Model Below --"
-
 # --- Header ---
 st.title("📦 Warehouse Inventory")
 st.markdown("---")
-
-# --- Input Area (Mobile Optimized) ---
-colA, colB = st.columns(2)
-with colA:
-    loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
-with colB:
-    qty = st.number_input("Quantity", min_value=1, step=1, key="qty_input")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- Model Selection Logic ---
-existing_models = []
-if not df_log.empty and "Model" in df_log.columns:
-    existing_models = sorted(df_log['Model'].dropna().unique().tolist())
-
-options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
-
-model_selected = st.selectbox("📋 Quick Select Existing Model:", options, key="select_input")
-model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...", key="text_input").upper().strip()
-
-if model_typed:
-    active_model = model_typed
-elif model_selected != "-- Type/Scan New Model Below --":
-    active_model = model_selected
-else:
-    active_model = ""
 
 # --- Math & Database Functions with Automatic Retry ---
 def safe_update(dataframe):
@@ -110,56 +70,81 @@ def safe_update(dataframe):
                 raise e
     return False
 
-def modify_inventory(direction):
-    if not active_model:
-        st.error("Please enter a Model Number.")
-        return
-        
-    change = qty if direction == "add" else -qty
-    action_word = "Added" if direction == "add" else "Removed"
-    
-    new_row = pd.DataFrame([{
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Action": action_word,
-        "Model": active_model,
-        "Location": loc,
-        "Quantity": change
-    }])
-    
-    updated_df = pd.concat([df_log, new_row], ignore_index=True)
-    
-    with st.spinner("Saving..."):
-        if safe_update(updated_df):
-            st.cache_data.clear()
-            reset_form()
-            st.rerun()
-        else:
-            st.error("Google's speed limit is still active. Please wait 1 minute.")
+# --- INPUT FORM (The Disciplined Stance) ---
+# Wrapping everything in a form prevents the State Exception by controlling when the app reruns.
+with st.form("inventory_form", clear_on_submit=True):
+    colA, colB = st.columns(2)
+    with colA:
+        loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
+    with colB:
+        qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
-def undo_last():
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Model Selection Logic
+    existing_models = []
+    if not df_log.empty and "Model" in df_log.columns:
+        existing_models = sorted(df_log['Model'].dropna().unique().tolist())
+
+    options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
+
+    model_selected = st.selectbox("📋 Quick Select Existing Model:", options)
+    model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...").upper().strip()
+
+    # Resolve active model
+    if model_typed:
+        active_model = model_typed
+    elif model_selected != "-- Type/Scan New Model Below --":
+        active_model = model_selected
+    else:
+        active_model = ""
+
+    # Action Buttons inside the Form
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+        add_btn = st.form_submit_button("ADD (+)", use_container_width=True, type="primary")
+    with f_col2:
+        sub_btn = st.form_submit_button("SUB (-)", use_container_width=True)
+
+    if add_btn or sub_btn:
+        if not active_model:
+            st.error("Please enter a Model Number.")
+        else:
+            direction = "add" if add_btn else "sub"
+            change = qty if direction == "add" else -qty
+            action_word = "Added" if direction == "add" else "Removed"
+            
+            new_row = pd.DataFrame([{
+                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Action": action_word,
+                "Model": active_model,
+                "Location": loc,
+                "Quantity": change
+            }])
+            
+            updated_df = pd.concat([df_log, new_row], ignore_index=True)
+            
+            with st.spinner("Saving..."):
+                if safe_update(updated_df):
+                    st.cache_data.clear()
+                    st.success(f"✓ {action_word} {qty} {active_model}")
+                    time.sleep(1) # Brief pause so you see the success message
+                    st.rerun()
+                else:
+                    st.error("Google's speed limit is active. Wait 1 min.")
+
+# --- Undo Button (Outside the form) ---
+if st.button("↺ Undo Last Entry", use_container_width=True):
     if df_log.empty:
         st.warning("Nothing to undo!")
-        return
-    updated_df = df_log.iloc[:-1]
-    with st.spinner("Undoing..."):
-        if safe_update(updated_df):
-            st.cache_data.clear()
-            reset_form()
-            st.rerun()
-        else:
-            st.error("Could not undo. Speed limit active.")
-
-# --- Action Buttons ---
-btn_col1, btn_col2, btn_col3 = st.columns(3)
-with btn_col1:
-    if st.button("ADD (+)", use_container_width=True, type="primary"):
-        modify_inventory("add")
-with btn_col2:
-    if st.button("SUB (-)", use_container_width=True):
-        modify_inventory("sub")
-with btn_col3:
-    if st.button("↺ Undo", use_container_width=True):
-        undo_last()
+    else:
+        updated_df = df_log.iloc[:-1]
+        with st.spinner("Undoing..."):
+            if safe_update(updated_df):
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("Could not undo. Speed limit active.")
 
 st.markdown("---")
 
@@ -208,5 +193,4 @@ if st.button("⚠️ Wipe Database"):
     empty_df = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
     if safe_update(empty_df):
         st.cache_data.clear()
-        reset_form()
         st.rerun()

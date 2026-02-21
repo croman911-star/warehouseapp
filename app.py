@@ -36,17 +36,25 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def fetch_data():
     try:
         df = conn.read(worksheet="Sheet1")
-        if len(df.columns) == 0 or "Model" not in df.columns:
+        # Ensure it's a DataFrame and not None
+        if df is None:
+            return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
+        # If the sheet is empty or columns are missing, return a clean slate
+        if df.empty or "Model" not in df.columns:
             return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
         return df
     except Exception as e:
-        return e
+        # Instead of returning the exception object, we return it in a way we can check
+        return {"error": str(e)}
 
 data_result = fetch_data()
 
-if isinstance(data_result, Exception):
+# Logic to handle if the fetch failed
+if isinstance(data_result, dict) and "error" in data_result:
     st.error("⚠️ Connection issues or Speed Limit reached.")
     st.info("Wait 30-60 seconds and refresh the page.")
+    with st.expander("Show Error Details"):
+        st.write(data_result["error"])
     st.stop()
 else:
     df_log = data_result
@@ -64,26 +72,26 @@ def safe_update(dataframe):
             return True
         except Exception as e:
             if "429" in str(e) or "Quota" in str(e):
-                time.sleep(2) # Wait 2 seconds before retrying
+                time.sleep(2) 
                 continue
             else:
                 raise e
     return False
 
 # --- STICKY LOCATION (Outside the form so it doesn't reset) ---
-# This ensures that once you pick your area, it stays there until you manually change it.
 loc = st.selectbox("📍 Current Location", ["Warehouse", "Assembly", "Suspect"])
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- INPUT FORM (The Disciplined Stance) ---
 with st.form("inventory_form", clear_on_submit=True):
-    # Quantity is now in its own row inside the form
     qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
-    # Model Selection Logic
+    # Robust Model Selection Logic
     existing_models = []
-    if not df_log.empty and "Model" in df_log.columns:
+    # Only try to extract models if the DataFrame exists and has data
+    if isinstance(df_log, pd.DataFrame) and not df_log.empty and "Model" in df_log.columns:
+        # Safety check: dropna() removes empty rows, unique() prevents duplicates
         existing_models = sorted(df_log['Model'].dropna().unique().tolist())
 
     options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
@@ -122,6 +130,7 @@ with st.form("inventory_form", clear_on_submit=True):
                 "Quantity": change
             }])
             
+            # Combine the new entry with the existing data
             updated_df = pd.concat([df_log, new_row], ignore_index=True)
             
             with st.spinner("Saving..."):
@@ -153,7 +162,11 @@ st.subheader("📊 Live List")
 
 report_rows = []
 if not df_log.empty:
-    summary = df_log.groupby(['Model', 'Location'])['Quantity'].sum().reset_index()
+    # Ensure data types are correct for grouping
+    df_calc = df_log.copy()
+    df_calc['Quantity'] = pd.to_numeric(df_calc['Quantity'], errors='coerce').fillna(0)
+    
+    summary = df_calc.groupby(['Model', 'Location'])['Quantity'].sum().reset_index()
     unique_models = sorted(summary['Model'].unique())
     
     for m in unique_models:

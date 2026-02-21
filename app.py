@@ -31,8 +31,6 @@ if not st.session_state.authenticated:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- QUOTA DEFENSE: Caching the Read ---
-# ttl=10 means we only ask Google for new data once every 10 seconds maximum,
-# unless we explicitly clear the cache after a save.
 @st.cache_data(ttl=10)
 def fetch_data():
     try:
@@ -46,21 +44,24 @@ def fetch_data():
 data_result = fetch_data()
 
 if isinstance(data_result, Exception):
-    st.error("⚠️ Could not connect to Google Sheets. You might be hitting the speed limit (Quota).")
-    st.info("Wait 60 seconds and try again.")
-    with st.expander("🔍 See Full Technical Error"):
-        st.code(str(data_result))
+    st.error("⚠️ Connection issues. Please wait 60 seconds.")
     st.stop()
 else:
     df_log = data_result
 
-# --- Initialize Proxy State ---
-if "proxy_qty" not in st.session_state:
-    st.session_state.proxy_qty = 1
-if "proxy_model" not in st.session_state:
-    st.session_state.proxy_model = ""
-if "proxy_select" not in st.session_state:
-    st.session_state.proxy_select = "-- Type/Scan New Model Below --"
+# --- Form Reset Logic (The Ready Stance) ---
+def reset_form():
+    st.session_state.qty_input = 1
+    st.session_state.text_input = ""
+    st.session_state.select_input = "-- Type/Scan New Model Below --"
+
+# Initialize state keys if they don't exist
+if "qty_input" not in st.session_state:
+    st.session_state.qty_input = 1
+if "text_input" not in st.session_state:
+    st.session_state.text_input = ""
+if "select_input" not in st.session_state:
+    st.session_state.select_input = "-- Type/Scan New Model Below --"
 
 # --- Header ---
 st.title("📦 Warehouse Inventory")
@@ -71,8 +72,7 @@ colA, colB = st.columns(2)
 with colA:
     loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
 with colB:
-    qty = st.number_input("Quantity", min_value=1, step=1, value=st.session_state.proxy_qty)
-    st.session_state.proxy_qty = qty 
+    qty = st.number_input("Quantity", min_value=1, step=1, key="qty_input")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -87,30 +87,23 @@ options = ["-- Type/Scan New Model Below --"] + existing_models if existing_mode
 model_selected = st.selectbox(
     "📋 Quick Select Existing Model:", 
     options,
-    index=options.index(st.session_state.proxy_select) if st.session_state.proxy_select in options else 0,
-    key="selectbox_widget"
+    key="select_input"
 )
 
 # 2. Text Input
 model_typed = st.text_input(
     "⌨️ Type or Scan Model ⬇️", 
     placeholder="Type or scan model...",
-    value=st.session_state.proxy_model,
-    key="text_widget"
+    key="text_input"
 ).upper().strip()
 
-# --- Sync Logic (No Reruns) ---
-# We check if the user just interacted with one and clear the other in state for the NEXT run.
-if model_typed != st.session_state.proxy_model and model_typed != "":
-    st.session_state.proxy_model = model_typed
-    st.session_state.proxy_select = "-- Type/Scan New Model Below --"
-
-if model_selected != st.session_state.proxy_select and model_selected != "-- Type/Scan New Model Below --":
-    st.session_state.proxy_select = model_selected
-    st.session_state.proxy_model = ""
-
-# Determine active model
-active_model = st.session_state.proxy_select if st.session_state.proxy_select != "-- Type/Scan New Model Below --" else st.session_state.proxy_model
+# Resolve active model: Typed text overrides selection if present
+if model_typed:
+    active_model = model_typed
+elif model_selected != "-- Type/Scan New Model Below --":
+    active_model = model_selected
+else:
+    active_model = ""
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):
@@ -134,24 +127,21 @@ def modify_inventory(direction):
     with st.spinner("Saving to Google Sheets..."):
         try:
             conn.update(worksheet="Sheet1", data=updated_df)
-            st.cache_data.clear() # Force a fresh read on next load
-            
-            # Reset Ready Stance
-            st.session_state.proxy_qty = 1
-            st.session_state.proxy_model = ""
-            st.session_state.proxy_select = "-- Type/Scan New Model Below --"
+            st.cache_data.clear() # Clear cache to show new data immediately
+            reset_form() # Reset the fields for the next entry
             st.rerun()
         except Exception as e:
-            st.error("Quota Limit Reached. Please wait 1 minute before trying again.")
+            st.error("Save failed. You may have hit the Google speed limit. Wait 1 min.")
 
 def undo_last():
     if df_log.empty:
         st.warning("Nothing to undo!")
         return
     updated_df = df_log.iloc[:-1]
-    with st.spinner("Undoing last action..."):
+    with st.spinner("Undoing..."):
         conn.update(worksheet="Sheet1", data=updated_df)
         st.cache_data.clear()
+        reset_form()
         st.rerun()
 
 # --- Action Buttons ---
@@ -163,7 +153,7 @@ with btn_col2:
     if st.button("SUB (-)", use_container_width=True):
         modify_inventory("sub")
 with btn_col3:
-    if st.button("↺ Undo Last", use_container_width=True):
+    if st.button("↺ Undo", use_container_width=True):
         undo_last()
 
 st.markdown("---")
@@ -213,6 +203,5 @@ if st.button("⚠️ Wipe Database"):
     empty_df = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
     conn.update(worksheet="Sheet1", data=empty_df)
     st.cache_data.clear()
+    reset_form()
     st.rerun()
-
-

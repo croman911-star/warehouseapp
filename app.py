@@ -70,16 +70,16 @@ def safe_update(dataframe):
                 raise e
     return False
 
-# --- INPUT FORM (The Disciplined Stance) ---
-# Wrapping everything in a form prevents the State Exception by controlling when the app reruns.
-with st.form("inventory_form", clear_on_submit=True):
-    colA, colB = st.columns(2)
-    with colA:
-        loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
-    with colB:
-        qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+# --- STICKY LOCATION (Outside the form so it doesn't reset) ---
+# This ensures that once you pick your area, it stays there until you manually change it.
+loc = st.selectbox("📍 Current Location", ["Warehouse", "Assembly", "Suspect"])
 
-    st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- INPUT FORM (The Disciplined Stance) ---
+with st.form("inventory_form", clear_on_submit=True):
+    # Quantity is now in its own row inside the form
+    qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
     # Model Selection Logic
     existing_models = []
@@ -127,8 +127,8 @@ with st.form("inventory_form", clear_on_submit=True):
             with st.spinner("Saving..."):
                 if safe_update(updated_df):
                     st.cache_data.clear()
-                    st.success(f"✓ {action_word} {qty} {active_model}")
-                    time.sleep(1) # Brief pause so you see the success message
+                    st.success(f"✓ {action_word} {qty} {active_model} at {loc}")
+                    time.sleep(1) 
                     st.rerun()
                 else:
                     st.error("Google's speed limit is active. Wait 1 min.")
@@ -185,7 +185,7 @@ with st.expander("Show History"):
     if not df_log.empty:
         recent = df_log.tail(10).iloc[::-1]
         for _, row in recent.iterrows():
-            st.text(f"[{row['Timestamp']}] {row['Action']} {abs(row['Quantity'])} x {row['Model']}")
+            st.text(f"[{row['Timestamp']}] {row['Action']} {abs(row['Quantity'])} x {row['Model']} ({row['Location']})")
 
 # --- Reset Button ---
 st.markdown("<br>", unsafe_allow_html=True)

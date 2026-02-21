@@ -60,7 +60,23 @@ with colB:
 st.markdown("<br>", unsafe_allow_html=True) # Adds a little spacing
 
 # 2. Model input is grouped directly above the Action buttons for easy thumb access
-model = st.text_input("Model Number ⬇️", placeholder="Type or scan model...").upper().strip()
+# Get a list of models we already have in the database
+existing_models = []
+if not df_log.empty and "Model" in df_log.columns:
+    existing_models = sorted(df_log['Model'].dropna().unique().tolist())
+
+if existing_models:
+    # We have history! Give them a searchable dropdown that includes a "Type New" option
+    options = ["✨ TYPE NEW MODEL ✨"] + existing_models
+    selected_option = st.selectbox("Select Existing or Type New ⬇️", options)
+    
+    if selected_option == "✨ TYPE NEW MODEL ✨":
+        model = st.text_input("Enter New Model Number", placeholder="Type or scan...").upper().strip()
+    else:
+        model = selected_option
+else:
+    # First time using the app (or empty database), just show the text box
+    model = st.text_input("Model Number ⬇️", placeholder="Type or scan model...").upper().strip()
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):

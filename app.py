@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import traceback
 import time
 from streamlit_gsheets import GSheetsConnection
 
@@ -25,192 +24,161 @@ if not st.session_state.authenticated:
             st.rerun()
         else:
             st.error("Incorrect password. Access Denied.")
-            
     st.stop() 
 
 # --- Database Connection (Google Sheets) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- QUOTA DEFENSE: Caching the Read ---
-@st.cache_data(ttl=15)
+# --- OPTIMIZED DATA FETCHING ---
+@st.cache_data(ttl=60) # Longer cache for general views
 def fetch_data():
     try:
         df = conn.read(worksheet="Sheet1")
-        # Ensure it's a valid DataFrame
         if df is None or not isinstance(df, pd.DataFrame):
             return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
-        # If columns are missing, return a clean slate
         if "Model" not in df.columns:
             return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
+        # Clean data: Ensure Quantity is numeric and Model is string
+        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+        df['Model'] = df['Model'].astype(str).str.upper().str.strip()
         return df
     except Exception as e:
-        # Return the error as a string so we can handle it gracefully
         return str(e)
 
+# Initialize page data
 data_result = fetch_data()
 
-# Logic to handle if the fetch failed (The Iron Guard)
 if isinstance(data_result, str):
-    st.error("⚠️ Connection issues or Speed Limit reached.")
-    st.info("Wait 30-60 seconds and refresh the page.")
-    with st.expander("Show Error Details"):
+    st.error("⚠️ The dojo is currently busy (Google Speed Limit).")
+    st.info("Wait 30 seconds for the system to regain its balance and refresh.")
+    with st.expander("Technical Stance Details"):
         st.write(data_result)
     st.stop()
 else:
     df_log = data_result
 
-# --- Header ---
-st.title("📦 Warehouse Inventory")
-st.markdown("---")
-
-# --- Math & Database Functions with Automatic Retry ---
+# --- Math & Database Functions ---
 def safe_update(dataframe):
-    """Retries the update 3 times with a backoff to beat the quota limit."""
-    for attempt in range(3):
+    """Retries the update with exponential backoff to maximize success chance."""
+    wait_times = [1, 2, 4] # Wait 1s, then 2s, then 4s if blocked
+    for attempt, wait in enumerate(wait_times):
         try:
             conn.update(worksheet="Sheet1", data=dataframe)
             return True
         except Exception as e:
             if "429" in str(e) or "Quota" in str(e):
-                time.sleep(2) 
-                continue
-            else:
-                raise e
+                if attempt < len(wait_times) - 1:
+                    time.sleep(wait)
+                    continue
+            st.error(f"Strike failed: {str(e)}")
+            return False
     return False
+
+# --- Header ---
+st.title("📦 Warehouse Inventory")
+st.markdown("---")
 
 # --- STICKY LOCATION ---
 loc = st.selectbox("📍 Current Location", ["Warehouse", "Assembly", "Suspect"])
 
-st.markdown("<br>", unsafe_allow_html=True)
-
 # --- INPUT FORM ---
-# We use a try/except block inside the form to ensure it ALWAYS renders the submit button
 with st.form("inventory_form", clear_on_submit=True):
     qty = st.number_input("Quantity", min_value=1, step=1, value=1)
 
-    # Robust Model Selection Logic
+    # Robust Model Selection
     existing_models = []
-    try:
-        if not df_log.empty and "Model" in df_log.columns:
-            # dropna() removes empty rows, unique() prevents duplicates
-            models_list = df_log['Model'].dropna().unique().tolist()
-            existing_models = sorted([str(m) for m in models_list])
-    except Exception:
-        existing_models = []
+    if not df_log.empty:
+        models_list = df_log['Model'].unique().tolist()
+        existing_models = sorted([m for m in models_list if m and m != 'NAN'])
 
     options = ["-- Type/Scan New Model Below --"] + existing_models
-
     model_selected = st.selectbox("📋 Quick Select Existing Model:", options)
     model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...").upper().strip()
 
-    # Resolve active model
-    if model_typed:
-        active_model = model_typed
-    elif model_selected != "-- Type/Scan New Model Below --":
-        active_model = model_selected
-    else:
-        active_model = ""
+    active_model = model_typed if model_typed else (model_selected if model_selected != "-- Type/Scan New Model Below --" else "")
 
-    # Action Buttons inside the Form
-    f_col1, f_col2 = st.columns(2)
-    with f_col1:
+    col1, col2 = st.columns(2)
+    with col1:
         add_btn = st.form_submit_button("ADD (+)", use_container_width=True, type="primary")
-    with f_col2:
+    with col2:
         sub_btn = st.form_submit_button("SUB (-)", use_container_width=True)
 
     if add_btn or sub_btn:
         if not active_model:
-            st.error("Please enter a Model Number.")
+            st.error("Missing Model: Please specify what you are moving.")
         else:
             direction = "add" if add_btn else "sub"
             change = qty if direction == "add" else -qty
-            action_word = "Added" if direction == "add" else "Removed"
             
             new_row = pd.DataFrame([{
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Action": action_word,
+                "Action": "Added" if add_btn else "Removed",
                 "Model": active_model,
                 "Location": loc,
                 "Quantity": change
             }])
             
-            # Combine the new entry with the existing data
             updated_df = pd.concat([df_log, new_row], ignore_index=True)
             
-            with st.spinner("Saving..."):
+            with st.spinner("Logging transaction..."):
                 if safe_update(updated_df):
-                    st.cache_data.clear()
-                    st.success(f"✓ {action_word} {qty} {active_model} at {loc}")
-                    time.sleep(1) 
+                    st.cache_data.clear() # Immediate clear so the view is fresh
+                    st.success(f"✓ Recorded: {qty} units of {active_model}")
+                    time.sleep(0.5)
                     st.rerun()
-                else:
-                    st.error("Google's speed limit is active. Wait 1 min.")
 
-# --- Undo Button ---
+# --- Utility Buttons ---
 if st.button("↺ Undo Last Entry", use_container_width=True):
     if df_log.empty:
-        st.warning("Nothing to undo!")
+        st.warning("History is empty.")
     else:
         updated_df = df_log.iloc[:-1]
-        with st.spinner("Undoing..."):
-            if safe_update(updated_df):
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("Could not undo. Speed limit active.")
+        if safe_update(updated_df):
+            st.cache_data.clear()
+            st.rerun()
 
 st.markdown("---")
 
-# --- Live Report Area ---
-st.subheader("📊 Live List")
+# --- LIVE REPORT AREA ---
+st.subheader("📊 Live Stock Status")
 
-report_rows = []
 if not df_log.empty:
-    try:
-        # Ensure data types are correct for grouping
-        df_calc = df_log.copy()
-        df_calc['Quantity'] = pd.to_numeric(df_calc['Quantity'], errors='coerce').fillna(0)
-        
-        summary = df_calc.groupby(['Model', 'Location'])['Quantity'].sum().reset_index()
-        unique_models = sorted(summary['Model'].unique())
-        
-        for m in unique_models:
-            model_data = summary[summary['Model'] == m]
-            wh = model_data[model_data['Location'] == 'Warehouse']['Quantity'].sum()
-            asm = model_data[model_data['Location'] == 'Assembly']['Quantity'].sum()
-            susp = model_data[model_data['Location'] == 'Suspect']['Quantity'].sum()
-            total = wh + asm
-            
-            if total != 0 or susp != 0:
-                report_rows.append({
-                    "Model": m, "Warehouse": int(wh), "Assembly": int(asm), "Total": int(total), "Suspect": int(susp)
-                })
-    except Exception:
-        st.warning("Data sync in progress... refresh if list doesn't appear.")
-
-if report_rows:
-    df_display = pd.DataFrame(report_rows)
-    search = st.text_input("🔍 Filter List:")
-    if search:
-        df_display = df_display[df_display["Model"].str.contains(search.upper())]
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    # Efficiently aggregate totals
+    summary = df_log.groupby(['Model', 'Location'])['Quantity'].sum().unstack(fill_value=0).reset_index()
     
-    csv = df_display.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 DOWNLOAD EXCEL", data=csv, file_name=f"Inventory_{datetime.now().strftime('%H%M')}.csv", mime="text/csv")
+    # Ensure all columns exist for a consistent UI
+    for c in ["Warehouse", "Assembly", "Suspect"]:
+        if c not in summary.columns:
+            summary[c] = 0
+            
+    summary['Total'] = summary['Warehouse'] + summary['Assembly']
+    
+    # Search/Filter
+    search = st.text_input("🔍 Quick Search Models:")
+    if search:
+        summary = summary[summary["Model"].str.contains(search.upper())]
+    
+    st.dataframe(
+        summary[["Model", "Warehouse", "Assembly", "Total", "Suspect"]].sort_values("Model"),
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # Download
+    csv = summary.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Export CSV", data=csv, file_name=f"stock_{datetime.now().strftime('%m%d')}.csv", mime="text/csv")
 else:
-    st.info("List is empty or loading.")
+    st.info("No items in the database.")
 
-# --- History Log ---
-with st.expander("Show History"):
+with st.expander("📝 View Recent Logs"):
     if not df_log.empty:
-        recent = df_log.tail(10).iloc[::-1]
-        for _, row in recent.iterrows():
-            st.text(f"[{row['Timestamp']}] {row['Action']} {abs(row['Quantity'])} x {row['Model']} ({row['Location']})")
+        st.dataframe(df_log.tail(15).iloc[::-1], use_container_width=True, hide_index=True)
 
-# --- Reset Button ---
-st.markdown("<br>", unsafe_allow_html=True)
-if st.button("⚠️ Wipe Database"):
+# --- Wipe Database ---
+st.markdown("<br><br>", unsafe_allow_html=True)
+if st.button("⚠️ Emergency: Wipe All Data"):
     empty_df = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
     if safe_update(empty_df):
         st.cache_data.clear()
         st.rerun()
+

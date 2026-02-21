@@ -30,19 +30,31 @@ if not st.session_state.authenticated:
 # --- Database Connection (Google Sheets) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-try:
-    df_log = conn.read(worksheet="Sheet1", ttl=0)
-    if len(df_log.columns) == 0 or "Model" not in df_log.columns:
-        df_log = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
-except Exception as e:
-    st.error("⚠️ Could not connect to Google Sheets. Please verify your Streamlit Secrets!")
-    st.error(f"Error Summary: {repr(e)}")
+# --- QUOTA DEFENSE: Caching the Read ---
+# ttl=10 means we only ask Google for new data once every 10 seconds maximum,
+# unless we explicitly clear the cache after a save.
+@st.cache_data(ttl=10)
+def fetch_data():
+    try:
+        df = conn.read(worksheet="Sheet1")
+        if len(df.columns) == 0 or "Model" not in df.columns:
+            return pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
+        return df
+    except Exception as e:
+        return e
+
+data_result = fetch_data()
+
+if isinstance(data_result, Exception):
+    st.error("⚠️ Could not connect to Google Sheets. You might be hitting the speed limit (Quota).")
+    st.info("Wait 60 seconds and try again.")
     with st.expander("🔍 See Full Technical Error"):
-        st.code(traceback.format_exc())
+        st.code(str(data_result))
     st.stop()
+else:
+    df_log = data_result
 
 # --- Initialize Proxy State ---
-# This acts as our "Ready Stance" - holding the data outside the widgets
 if "proxy_qty" not in st.session_state:
     st.session_state.proxy_qty = 1
 if "proxy_model" not in st.session_state:
@@ -59,9 +71,8 @@ colA, colB = st.columns(2)
 with colA:
     loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
 with colB:
-    # Use value= from our proxy state
     qty = st.number_input("Quantity", min_value=1, step=1, value=st.session_state.proxy_qty)
-    st.session_state.proxy_qty = qty # Update proxy when changed
+    st.session_state.proxy_qty = qty 
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -70,41 +81,36 @@ existing_models = []
 if not df_log.empty and "Model" in df_log.columns:
     existing_models = sorted(df_log['Model'].dropna().unique().tolist())
 
-# Logic for clearing one box when the other is used
 options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
 
 # 1. Quick Select
 model_selected = st.selectbox(
     "📋 Quick Select Existing Model:", 
     options,
-    index=options.index(st.session_state.proxy_select) if st.session_state.proxy_select in options else 0
+    index=options.index(st.session_state.proxy_select) if st.session_state.proxy_select in options else 0,
+    key="selectbox_widget"
 )
 
 # 2. Text Input
 model_typed = st.text_input(
     "⌨️ Type or Scan Model ⬇️", 
     placeholder="Type or scan model...",
-    value=st.session_state.proxy_model
+    value=st.session_state.proxy_model,
+    key="text_widget"
 ).upper().strip()
 
-# --- Interaction Logic (Hand-to-Hand synchronization) ---
-if model_typed != st.session_state.proxy_model:
-    # User typed something new! Reset the dropdown proxy
+# --- Sync Logic (No Reruns) ---
+# We check if the user just interacted with one and clear the other in state for the NEXT run.
+if model_typed != st.session_state.proxy_model and model_typed != "":
     st.session_state.proxy_model = model_typed
     st.session_state.proxy_select = "-- Type/Scan New Model Below --"
-    st.rerun()
 
-if model_selected != st.session_state.proxy_select:
-    # User picked something from the list! Clear the text proxy
+if model_selected != st.session_state.proxy_select and model_selected != "-- Type/Scan New Model Below --":
     st.session_state.proxy_select = model_selected
     st.session_state.proxy_model = ""
-    st.rerun()
 
-# Resolve final model choice
-if st.session_state.proxy_select != "-- Type/Scan New Model Below --":
-    active_model = st.session_state.proxy_select
-else:
-    active_model = st.session_state.proxy_model
+# Determine active model
+active_model = st.session_state.proxy_select if st.session_state.proxy_select != "-- Type/Scan New Model Below --" else st.session_state.proxy_model
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):
@@ -126,15 +132,17 @@ def modify_inventory(direction):
     updated_df = pd.concat([df_log, new_row], ignore_index=True)
     
     with st.spinner("Saving to Google Sheets..."):
-        conn.update(worksheet="Sheet1", data=updated_df)
-        st.cache_data.clear()
-        
-        # Reset Proxy State (The "Snap Back")
-        st.session_state.proxy_qty = 1
-        st.session_state.proxy_model = ""
-        st.session_state.proxy_select = "-- Type/Scan New Model Below --"
-        
-        st.rerun()
+        try:
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.cache_data.clear() # Force a fresh read on next load
+            
+            # Reset Ready Stance
+            st.session_state.proxy_qty = 1
+            st.session_state.proxy_model = ""
+            st.session_state.proxy_select = "-- Type/Scan New Model Below --"
+            st.rerun()
+        except Exception as e:
+            st.error("Quota Limit Reached. Please wait 1 minute before trying again.")
 
 def undo_last():
     if df_log.empty:
@@ -177,40 +185,34 @@ if not df_log.empty:
         
         if total != 0 or susp != 0:
             report_rows.append({
-                "Model": m, 
-                "Warehouse": int(wh), 
-                "Assembly": int(asm), 
-                "Total": int(total), 
-                "Suspect (Bad)": int(susp)
+                "Model": m, "Warehouse": int(wh), "Assembly": int(asm), "Total": int(total), "Suspect": int(susp)
             })
 
 if report_rows:
     df_display = pd.DataFrame(report_rows)
-    search = st.text_input("🔍 Search Models to Filter:")
+    search = st.text_input("🔍 Filter List:")
     if search:
         df_display = df_display[df_display["Model"].str.contains(search.upper())]
     st.dataframe(df_display, use_container_width=True, hide_index=True)
     
-    now = datetime.now().strftime("%Y-%m-%d_%H-%M")
     csv = df_display.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 DOWNLOAD EXCEL", data=csv, file_name=f"Inventory_{now}.csv", mime="text/csv")
+    st.download_button(label="📥 DOWNLOAD EXCEL", data=csv, file_name=f"Inventory_{datetime.now().strftime('%H%M')}.csv", mime="text/csv")
 else:
-    st.info("List is empty. Add models above.")
+    st.info("List is empty.")
 
 # --- History Log ---
-with st.expander("Show Recent History Log"):
+with st.expander("Show History"):
     if not df_log.empty:
         recent = df_log.tail(10).iloc[::-1]
         for _, row in recent.iterrows():
-            st.text(f"[{row['Timestamp']}] {row['Action']} {abs(row['Quantity'])} x {row['Model']} ({row['Location']})")
-    else:
-        st.text("No history yet.")
+            st.text(f"[{row['Timestamp']}] {row['Action']} {abs(row['Quantity'])} x {row['Model']}")
 
 # --- Reset Button ---
-st.markdown("<br><br>", unsafe_allow_html=True)
-if st.button("⚠️ Wipe Database (Clear All Data)"):
+st.markdown("<br>", unsafe_allow_html=True)
+if st.button("⚠️ Wipe Database"):
     empty_df = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
-    with st.spinner("Wiping database..."):
-        conn.update(worksheet="Sheet1", data=empty_df)
-        st.cache_data.clear()
-        st.rerun()
+    conn.update(worksheet="Sheet1", data=empty_df)
+    st.cache_data.clear()
+    st.rerun()
+
+

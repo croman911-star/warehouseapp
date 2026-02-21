@@ -5,6 +5,31 @@ from datetime import datetime
 # --- Page Setup ---
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
 
+# --- Authentication (The Bouncer) ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 App Locked")
+    st.warning("Please enter the password to access the inventory.")
+    
+    # Use type="password" so it hides the typing with dots
+    pwd = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        # Look in the secure vault for the password. 
+        # (It defaults to "blackbelt" only when testing locally on your computer)
+        correct_password = st.secrets.get("app_password", "blackbelt")
+        
+        if pwd == correct_password: 
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password. Access Denied.")
+            
+    # This crucial command stops the rest of the code from running!
+    st.stop() 
+
 # --- Memory Setup (Session State) ---
 # This acts exactly like LocalStorage did in the HTML version
 if 'data' not in st.session_state:

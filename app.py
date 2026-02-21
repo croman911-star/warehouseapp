@@ -41,6 +41,15 @@ except Exception as e:
         st.code(traceback.format_exc())
     st.stop()
 
+# --- Initialize Proxy State ---
+# This acts as our "Ready Stance" - holding the data outside the widgets
+if "proxy_qty" not in st.session_state:
+    st.session_state.proxy_qty = 1
+if "proxy_model" not in st.session_state:
+    st.session_state.proxy_model = ""
+if "proxy_select" not in st.session_state:
+    st.session_state.proxy_select = "-- Type/Scan New Model Below --"
+
 # --- Header ---
 st.title("📦 Warehouse Inventory")
 st.markdown("---")
@@ -50,10 +59,9 @@ colA, colB = st.columns(2)
 with colA:
     loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
 with colB:
-    # We remove the direct 'key' from the widget to avoid the State Exception
-    # and instead manage it via session_state manually if needed, 
-    # but for now, let's keep it simple.
-    qty = st.number_input("Quantity", min_value=1, step=1, value=1, key="qty_widget")
+    # Use value= from our proxy state
+    qty = st.number_input("Quantity", min_value=1, step=1, value=st.session_state.proxy_qty)
+    st.session_state.proxy_qty = qty # Update proxy when changed
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -62,49 +70,45 @@ existing_models = []
 if not df_log.empty and "Model" in df_log.columns:
     existing_models = sorted(df_log['Model'].dropna().unique().tolist())
 
-if "model_input" not in st.session_state:
-    st.session_state.model_input = ""
-if "quick_select" not in st.session_state:
-    st.session_state.quick_select = "-- Type/Scan New Model Below --"
+# Logic for clearing one box when the other is used
+options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
 
-def on_dropdown_change():
-    if st.session_state.quick_select != "-- Type/Scan New Model Below --":
-        st.session_state.model_input = ""
+# 1. Quick Select
+model_selected = st.selectbox(
+    "📋 Quick Select Existing Model:", 
+    options,
+    index=options.index(st.session_state.proxy_select) if st.session_state.proxy_select in options else 0
+)
 
-def on_text_change():
-    if st.session_state.model_input.strip():
-        st.session_state.quick_select = "-- Type/Scan New Model Below --"
-
-if existing_models:
-    options = ["-- Type/Scan New Model Below --"] + existing_models
-    model_selected = st.selectbox(
-        "📋 Quick Select Existing Model:", 
-        options,
-        key="quick_select",
-        on_change=on_dropdown_change
-    )
-else:
-    model_selected = None
-
-model_typed_raw = st.text_input(
+# 2. Text Input
+model_typed = st.text_input(
     "⌨️ Type or Scan Model ⬇️", 
     placeholder="Type or scan model...",
-    key="model_input",
-    on_change=on_text_change
-)
-model_typed = model_typed_raw.upper().strip()
+    value=st.session_state.proxy_model
+).upper().strip()
 
-# Resolve which model is active
-if model_selected and model_selected != "-- Type/Scan New Model Below --":
-    model = model_selected
-elif model_typed:
-    model = model_typed
+# --- Interaction Logic (Hand-to-Hand synchronization) ---
+if model_typed != st.session_state.proxy_model:
+    # User typed something new! Reset the dropdown proxy
+    st.session_state.proxy_model = model_typed
+    st.session_state.proxy_select = "-- Type/Scan New Model Below --"
+    st.rerun()
+
+if model_selected != st.session_state.proxy_select:
+    # User picked something from the list! Clear the text proxy
+    st.session_state.proxy_select = model_selected
+    st.session_state.proxy_model = ""
+    st.rerun()
+
+# Resolve final model choice
+if st.session_state.proxy_select != "-- Type/Scan New Model Below --":
+    active_model = st.session_state.proxy_select
 else:
-    model = ""
+    active_model = st.session_state.proxy_model
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):
-    if not model:
+    if not active_model:
         st.error("Please enter a Model Number.")
         return
         
@@ -114,7 +118,7 @@ def modify_inventory(direction):
     new_row = pd.DataFrame([{
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Action": action_word,
-        "Model": model,
+        "Model": active_model,
         "Location": loc,
         "Quantity": change
     }])
@@ -125,12 +129,10 @@ def modify_inventory(direction):
         conn.update(worksheet="Sheet1", data=updated_df)
         st.cache_data.clear()
         
-        # To avoid the Exception, we clear the keys that AREN'T 
-        # throwing errors and let the app state refresh naturally.
-        st.session_state.model_input = ""
-        st.session_state.quick_select = "-- Type/Scan New Model Below --"
-        # We don't force qty_widget = 1 here to avoid the error; 
-        # instead, we rely on the rerun to reset the widget default.
+        # Reset Proxy State (The "Snap Back")
+        st.session_state.proxy_qty = 1
+        st.session_state.proxy_model = ""
+        st.session_state.proxy_select = "-- Type/Scan New Model Below --"
         
         st.rerun()
 

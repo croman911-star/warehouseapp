@@ -49,14 +49,18 @@ except Exception as e:
 st.title("📦 Warehouse Inventory")
 st.markdown("---")
 
-# --- Input Area ---
-col1, col2, col3 = st.columns([2, 2, 1])
-with col1:
-    model = st.text_input("Model Number").upper().strip()
-with col2:
-    qty = st.number_input("Quantity", min_value=1, step=1, value=1)
-with col3:
+# --- Input Area (Mobile Optimized) ---
+# 1. Settings go first (since they usually stay the same for multiple entries)
+colA, colB = st.columns(2)
+with colA:
     loc = st.selectbox("Location", ["Warehouse", "Assembly", "Suspect"])
+with colB:
+    qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+
+st.markdown("<br>", unsafe_allow_html=True) # Adds a little spacing
+
+# 2. Model input is grouped directly above the Action buttons for easy thumb access
+model = st.text_input("Model Number ⬇️", placeholder="Type or scan model...").upper().strip()
 
 # --- Math & Database Functions ---
 def modify_inventory(direction):
@@ -99,6 +103,7 @@ def undo_last():
         st.rerun()
 
 # --- Action Buttons ---
+# 3. Action buttons immediately follow the Model Number
 btn_col1, btn_col2, btn_col3 = st.columns(3)
 with btn_col1:
     if st.button("ADD (+)", use_container_width=True, type="primary"):

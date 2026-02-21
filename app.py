@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import traceback
+import time
 from streamlit_gsheets import GSheetsConnection
 
 # --- Page Setup ---
@@ -31,7 +32,7 @@ if not st.session_state.authenticated:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- QUOTA DEFENSE: Caching the Read ---
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=15) # Increased TTL slightly to save quota
 def fetch_data():
     try:
         df = conn.read(worksheet="Sheet1")
@@ -44,7 +45,8 @@ def fetch_data():
 data_result = fetch_data()
 
 if isinstance(data_result, Exception):
-    st.error("⚠️ Connection issues. Please wait 60 seconds.")
+    st.error("⚠️ Connection issues or Speed Limit reached.")
+    st.info("Wait 30-60 seconds and refresh the page.")
     st.stop()
 else:
     df_log = data_result
@@ -55,7 +57,7 @@ def reset_form():
     st.session_state.text_input = ""
     st.session_state.select_input = "-- Type/Scan New Model Below --"
 
-# Initialize state keys if they don't exist
+# Initialize state keys
 if "qty_input" not in st.session_state:
     st.session_state.qty_input = 1
 if "text_input" not in st.session_state:
@@ -83,21 +85,9 @@ if not df_log.empty and "Model" in df_log.columns:
 
 options = ["-- Type/Scan New Model Below --"] + existing_models if existing_models else ["-- Type/Scan New Model Below --"]
 
-# 1. Quick Select
-model_selected = st.selectbox(
-    "📋 Quick Select Existing Model:", 
-    options,
-    key="select_input"
-)
+model_selected = st.selectbox("📋 Quick Select Existing Model:", options, key="select_input")
+model_typed = st.text_input("⌨️ Type or Scan Model ⬇️", placeholder="Type or scan model...", key="text_input").upper().strip()
 
-# 2. Text Input
-model_typed = st.text_input(
-    "⌨️ Type or Scan Model ⬇️", 
-    placeholder="Type or scan model...",
-    key="text_input"
-).upper().strip()
-
-# Resolve active model: Typed text overrides selection if present
 if model_typed:
     active_model = model_typed
 elif model_selected != "-- Type/Scan New Model Below --":
@@ -105,7 +95,21 @@ elif model_selected != "-- Type/Scan New Model Below --":
 else:
     active_model = ""
 
-# --- Math & Database Functions ---
+# --- Math & Database Functions with Automatic Retry ---
+def safe_update(dataframe):
+    """Retries the update 3 times with a backoff to beat the quota limit."""
+    for attempt in range(3):
+        try:
+            conn.update(worksheet="Sheet1", data=dataframe)
+            return True
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e):
+                time.sleep(2) # Wait 2 seconds before retrying
+                continue
+            else:
+                raise e
+    return False
+
 def modify_inventory(direction):
     if not active_model:
         st.error("Please enter a Model Number.")
@@ -124,14 +128,13 @@ def modify_inventory(direction):
     
     updated_df = pd.concat([df_log, new_row], ignore_index=True)
     
-    with st.spinner("Saving to Google Sheets..."):
-        try:
-            conn.update(worksheet="Sheet1", data=updated_df)
-            st.cache_data.clear() # Clear cache to show new data immediately
-            reset_form() # Reset the fields for the next entry
+    with st.spinner("Saving..."):
+        if safe_update(updated_df):
+            st.cache_data.clear()
+            reset_form()
             st.rerun()
-        except Exception as e:
-            st.error("Save failed. You may have hit the Google speed limit. Wait 1 min.")
+        else:
+            st.error("Google's speed limit is still active. Please wait 1 minute.")
 
 def undo_last():
     if df_log.empty:
@@ -139,10 +142,12 @@ def undo_last():
         return
     updated_df = df_log.iloc[:-1]
     with st.spinner("Undoing..."):
-        conn.update(worksheet="Sheet1", data=updated_df)
-        st.cache_data.clear()
-        reset_form()
-        st.rerun()
+        if safe_update(updated_df):
+            st.cache_data.clear()
+            reset_form()
+            st.rerun()
+        else:
+            st.error("Could not undo. Speed limit active.")
 
 # --- Action Buttons ---
 btn_col1, btn_col2, btn_col3 = st.columns(3)
@@ -201,7 +206,7 @@ with st.expander("Show History"):
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("⚠️ Wipe Database"):
     empty_df = pd.DataFrame(columns=["Timestamp", "Action", "Model", "Location", "Quantity"])
-    conn.update(worksheet="Sheet1", data=empty_df)
-    st.cache_data.clear()
-    reset_form()
-    st.rerun()
+    if safe_update(empty_df):
+        st.cache_data.clear()
+        reset_form()
+        st.rerun()

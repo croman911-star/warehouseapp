@@ -9,13 +9,12 @@ import glob
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
 
 # --- USER ACCOUNTS ---
-# Add or remove users here. Format is "Username": "Password"
-USERS = {
-    "Admin": "copper713",
-    "Cesar": "copper123", 
-    "Daniel": "copper1",
-    "Worker2": "pass2"
-}
+# Securely load passwords from Streamlit's hidden vault
+try:
+    USERS = st.secrets["passwords"]
+except Exception:
+    st.error("🚨 Security Alert: The hidden password vault is missing! Please set up your secrets.")
+    st.stop()
 
 # --- Authentication Logic ---
 if 'authenticated' not in st.session_state:
@@ -101,8 +100,23 @@ with colB:
 
 st.markdown("---")
 
-# Extract all known models for our dropdown
-unique_models = sorted(list(set([k.split("|")[0] for k in st.session_state.data.keys()])))
+# Extract ALL known models from ALL users for a Global Dropdown Dictionary
+global_models = set()
+# First, add current user's models
+for k in st.session_state.data.keys():
+    global_models.add(k.split("|")[0])
+    
+# Next, sweep all other users' files to build the master list of items
+for file in glob.glob("inventory_data_*.json"):
+    try:
+        with open(file, "r") as f:
+            user_data = json.load(f)
+            for k in user_data.keys():
+                global_models.add(k.split("|")[0])
+    except:
+        pass
+
+unique_models = sorted(list(global_models))
 
 # --- Input Area ---
 st.write("**Add / Remove Inventory**")
@@ -246,6 +260,41 @@ with reset_col2:
         st.session_state.history = []
         save_local_db() 
         st.rerun()
+
+st.markdown("---")
+st.write("**❌ Delete a Specific Model (Fix Typos)**")
+del_col1, del_col2 = st.columns([3, 1])
+with del_col1:
+    model_to_delete = st.selectbox("Select model to permanently remove from memory:", ["-- Select --"] + unique_models)
+with del_col2:
+    st.write("&nbsp;") # Spacing to align the button with the dropdown box
+    if st.button("Delete Model", use_container_width=True):
+        if model_to_delete and model_to_delete != "-- Select --":
+            # 1. Delete from current user session
+            keys_to_delete = [k for k in st.session_state.data.keys() if k.startswith(f"{model_to_delete}|")]
+            for k in keys_to_delete:
+                del st.session_state.data[k]
+            save_local_db()
+            
+            # 2. Globally delete from ALL other users' files to completely purge the typo
+            for file in glob.glob("inventory_data_*.json"):
+                try:
+                    with open(file, "r") as f:
+                        other_data = json.load(f)
+                    
+                    changed = False
+                    keys_to_purge = [k for k in other_data.keys() if k.startswith(f"{model_to_delete}|")]
+                    for k in keys_to_purge:
+                        del other_data[k]
+                        changed = True
+                        
+                    if changed:
+                        with open(file, "w") as f:
+                            json.dump(other_data, f)
+                except:
+                    pass
+            
+            st.rerun()
 
 # --- ADMIN MASTER VIEW ---
 if st.session_state.current_user == "Admin":

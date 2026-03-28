@@ -247,54 +247,63 @@ st.subheader("⚙️ System Management")
 reset_col1, reset_col2 = st.columns(2)
 
 with reset_col1:
-    if st.button("🔄 Reset Counts to 0 (Keep Memory)", use_container_width=True):
-        for key in st.session_state.data:
-            st.session_state.data[key] = 0
-        st.session_state.history = []  
-        save_local_db()
-        st.rerun()
+    with st.expander("🔄 Reset Counts to 0"):
+        st.warning("Are you sure? This sets all your counts to 0 but keeps the models in memory.")
+        if st.button("Yes, Reset Counts", use_container_width=True):
+            for key in st.session_state.data:
+                st.session_state.data[key] = 0
+            st.session_state.history = []  
+            save_local_db()
+            st.rerun()
 
 with reset_col2:
-    if st.button("🗑️ Wipe Everything (Hard Reset)", use_container_width=True):
-        st.session_state.data = {}
-        st.session_state.history = []
-        save_local_db() 
-        st.rerun()
+    # Only Admin can see and use the Hard Reset
+    if st.session_state.current_user == "Admin":
+        with st.expander("🗑️ Wipe Everything"):
+            st.warning("🚨 DANGER: This permanently erases all your models and counts. Are you sure?")
+            if st.button("Yes, Wipe My Data", use_container_width=True, type="primary"):
+                st.session_state.data = {}
+                st.session_state.history = []
+                save_local_db() 
+                st.rerun()
 
 st.markdown("---")
-st.write("**❌ Delete a Specific Model (Fix Typos)**")
-del_col1, del_col2 = st.columns([3, 1])
-with del_col1:
-    model_to_delete = st.selectbox("Select model to permanently remove from memory:", ["-- Select --"] + unique_models)
-with del_col2:
-    st.write("&nbsp;") # Spacing to align the button with the dropdown box
-    if st.button("Delete Model", use_container_width=True):
-        if model_to_delete and model_to_delete != "-- Select --":
-            # 1. Delete from current user session
-            keys_to_delete = [k for k in st.session_state.data.keys() if k.startswith(f"{model_to_delete}|")]
-            for k in keys_to_delete:
-                del st.session_state.data[k]
-            save_local_db()
-            
-            # 2. Globally delete from ALL other users' files to completely purge the typo
-            for file in glob.glob("inventory_data_*.json"):
-                try:
-                    with open(file, "r") as f:
-                        other_data = json.load(f)
+
+# Only Admin can delete models globally
+if st.session_state.current_user == "Admin":
+    with st.expander("❌ Delete a Specific Model (Fix Typos)"):
+        st.write("Select a model to permanently remove from memory:")
+        del_col1, del_col2 = st.columns([3, 1])
+        with del_col1:
+            model_to_delete = st.selectbox("Select model:", ["-- Select --"] + unique_models, label_visibility="collapsed")
+        with del_col2:
+            if st.button("Delete Model", use_container_width=True, type="primary"):
+                if model_to_delete and model_to_delete != "-- Select --":
+                    # 1. Delete from current user session
+                    keys_to_delete = [k for k in st.session_state.data.keys() if k.startswith(f"{model_to_delete}|")]
+                    for k in keys_to_delete:
+                        del st.session_state.data[k]
+                    save_local_db()
                     
-                    changed = False
-                    keys_to_purge = [k for k in other_data.keys() if k.startswith(f"{model_to_delete}|")]
-                    for k in keys_to_purge:
-                        del other_data[k]
-                        changed = True
-                        
-                    if changed:
-                        with open(file, "w") as f:
-                            json.dump(other_data, f)
-                except:
-                    pass
-            
-            st.rerun()
+                    # 2. Globally delete from ALL other users' files to completely purge the typo
+                    for file in glob.glob("inventory_data_*.json"):
+                        try:
+                            with open(file, "r") as f:
+                                other_data = json.load(f)
+                            
+                            changed = False
+                            keys_to_purge = [k for k in other_data.keys() if k.startswith(f"{model_to_delete}|")]
+                            for k in keys_to_purge:
+                                del other_data[k]
+                                changed = True
+                                
+                            if changed:
+                                with open(file, "w") as f:
+                                    json.dump(other_data, f)
+                        except:
+                            pass
+                    
+                    st.rerun()
 
 # --- ADMIN MASTER VIEW ---
 if st.session_state.current_user == "Admin":

@@ -7,36 +7,97 @@ import os
 # --- Page Setup ---
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
 
-# --- Local Database Configuration ---
-DATA_FILE = "inventory_data.json"
-HIST_FILE = "inventory_history.json"
+# --- USER ACCOUNTS ---
+# Add or remove users here. Format is "Username": "Password"
+USERS = {
+    "Admin": "copper713",
+    "Cesar": "copper123", 
+    "Daniel": "copper1",
+    "Worker2": "pass2"
+}
+
+# --- Authentication Logic ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'current_user' not in st.session_state:
+    st.session_state.current_user = None
+
+if not st.session_state.authenticated:
+    st.title("🔒 Warehouse Login")
+    st.markdown("Please log in to access your personal inventory workspace.")
+    
+    # Login Form
+    username_guess = st.text_input("Username")
+    pwd_guess = st.text_input("Password", type="password")
+    
+    if st.button("Login", type="primary"):
+        # Check if the username exists and the password matches
+        if username_guess in USERS and USERS[username_guess] == pwd_guess:
+            st.session_state.authenticated = True
+            st.session_state.current_user = username_guess
+            st.rerun()
+        else:
+            st.error("Incorrect username or password.")
+            
+    # Stop the rest of the app from loading until logged in
+    st.stop()
+
+# ==========================================
+# IF AUTHENTICATED, RUN THE REST OF THE APP
+# ==========================================
+
+# --- Local Database Configuration (Now User-Specific!) ---
+def get_data_file():
+    # Creates a unique file for each user, e.g., "inventory_data_Admin.json"
+    return f"inventory_data_{st.session_state.current_user}.json"
+
+def get_hist_file():
+    return f"inventory_history_{st.session_state.current_user}.json"
 
 def load_local_db():
+    data_file = get_data_file()
+    hist_file = get_hist_file()
+    
     if 'data' not in st.session_state:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
+        if os.path.exists(data_file):
+            with open(data_file, 'r') as f:
                 st.session_state.data = json.load(f)
         else:
             st.session_state.data = {}
 
     if 'history' not in st.session_state:
-        if os.path.exists(HIST_FILE):
-            with open(HIST_FILE, 'r') as f:
+        if os.path.exists(hist_file):
+            with open(hist_file, 'r') as f:
                 st.session_state.history = json.load(f)
         else:
             st.session_state.history = []
 
 def save_local_db():
-    with open(DATA_FILE, 'w') as f:
+    data_file = get_data_file()
+    hist_file = get_hist_file()
+    
+    with open(data_file, 'w') as f:
         json.dump(st.session_state.data, f)
-    with open(HIST_FILE, 'w') as f:
+    with open(hist_file, 'w') as f:
         json.dump(st.session_state.history, f)
 
-# Initialize the database on startup
+# Initialize the database on startup for the logged-in user
 load_local_db()
 
 # --- Header ---
-st.title("📦 Warehouse Inventory")
+colA, colB = st.columns([4, 1])
+with colA:
+    st.title(f"📦 Workspace: {st.session_state.current_user}")
+with colB:
+    if st.button("Logout", key="logout_btn"):
+        # Clear the session when logging out
+        st.session_state.authenticated = False
+        st.session_state.current_user = None
+        # Remove data from session memory so next user doesn't see it before load
+        if 'data' in st.session_state: del st.session_state.data
+        if 'history' in st.session_state: del st.session_state.history
+        st.rerun()
+
 st.markdown("---")
 
 # Extract all known models for our dropdown
@@ -110,7 +171,7 @@ with btn_col3:
             last = st.session_state.history.pop()
             change = last["qty"] if last["action"] == "Added" else -last["qty"]
             st.session_state.data[last["key"]] -= change
-            save_local_db() # Save the undo action to hard drive
+            save_local_db() # Save the undo action
             st.info(f"↺ Undid last action for {last['model']}")
             st.rerun()
 
@@ -150,7 +211,8 @@ if report_rows:
     st.download_button(
         label="📥 DOWNLOAD EXCEL",
         data=csv,
-        file_name=f"Inventory_{now}.csv",
+        # Adds the username to the Excel file so you know whose count it is!
+        file_name=f"Inventory_{st.session_state.current_user}_{now}.csv",
         mime="text/csv",
     )
 else:
@@ -174,12 +236,12 @@ with reset_col1:
         for key in st.session_state.data:
             st.session_state.data[key] = 0
         st.session_state.history = []  
-        save_local_db() # Clear local files too
+        save_local_db()
         st.rerun()
 
 with reset_col2:
     if st.button("🗑️ Wipe Everything (Hard Reset)", use_container_width=True):
         st.session_state.data = {}
         st.session_state.history = []
-        save_local_db() # Wipe local files
+        save_local_db() 
         st.rerun()

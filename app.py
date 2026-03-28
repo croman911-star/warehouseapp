@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import json
 import os
+import glob
 
 # --- Page Setup ---
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
@@ -245,3 +246,55 @@ with reset_col2:
         st.session_state.history = []
         save_local_db() 
         st.rerun()
+
+# --- ADMIN MASTER VIEW ---
+if st.session_state.current_user == "Admin":
+    st.markdown("---")
+    st.header("👑 Admin Master Dashboard")
+    st.write("Aggregated totals combined from all users' personal workspaces.")
+    
+    master_data = {}
+    # The Admin code sweeps the folder to find EVERY user's saved data file
+    for file in glob.glob("inventory_data_*.json"):
+        with open(file, "r") as f:
+            try:
+                user_data = json.load(f)
+                for k, v in user_data.items():
+                    # Combine the counts from all users
+                    master_data[k] = master_data.get(k, 0) + v
+            except:
+                pass
+                
+    master_rows = []
+    master_models = sorted(list(set([k.split("|")[0] for k in master_data.keys()])))
+    
+    for m in master_models:
+        wh = master_data.get(f"{m}|Warehouse", 0)
+        asm = master_data.get(f"{m}|Assembly", 0)
+        susp = master_data.get(f"{m}|Suspect", 0)
+        total = wh + asm
+        
+        if total != 0 or susp != 0:
+            master_rows.append({
+                "Model": m, 
+                "Warehouse": wh, 
+                "Assembly": asm, 
+                "Total": total, 
+                "Suspect (Bad)": susp
+            })
+            
+    if master_rows:
+        df_master = pd.DataFrame(master_rows)
+        st.dataframe(df_master, use_container_width=True, hide_index=True)
+        
+        now = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        csv_master = df_master.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 DOWNLOAD MASTER EXCEL (ALL USERS)",
+            data=csv_master,
+            file_name=f"Inventory_MASTER_{now}.csv",
+            mime="text/csv",
+            type="primary" # Makes the Admin download button stand out
+        )
+    else:
+        st.info("No data across any users yet.")

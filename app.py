@@ -10,12 +10,34 @@ import gspread
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
 
 # --- USER ACCOUNTS ---
-# Securely load passwords from Streamlit's hidden vault
-try:
-    USERS = st.secrets["passwords"]
-except Exception:
-    st.error("🚨 Security Alert: The hidden password vault is missing! Please set up your secrets.")
-    st.stop()
+# Securely load the indestructible Master accounts from Streamlit's hidden vault
+if 'USERS' not in st.session_state:
+    try:
+        base_users = dict(st.secrets["passwords"])
+        st.session_state.USERS = base_users.copy()
+    except Exception:
+        st.error("🚨 Security Alert: The hidden password vault is missing! Please set up your secrets.")
+        st.stop()
+        
+    # Pull dynamic worker accounts from the Cloud "Users" tab
+    try:
+        credentials = dict(st.secrets["gcp_service_account"])
+        gc = gspread.service_account_from_dict(credentials)
+        sh = gc.open("Warehouse Live Sync")
+        try:
+            users_sheet = sh.worksheet("Users")
+            cloud_users = users_sheet.get_all_records()
+            for row in cloud_users:
+                u = str(row.get("Username", "")).strip()
+                p = str(row.get("Password", "")).strip()
+                if u and p:
+                    st.session_state.USERS[u] = p
+        except gspread.exceptions.WorksheetNotFound:
+            # Create the sheet for the future if it doesn't exist
+            users_sheet = sh.add_worksheet(title="Users", rows="100", cols="2")
+            users_sheet.update([["Username", "Password"]])
+    except Exception:
+        pass # Fail silently if internet is down, Master Admin can still log in
 
 # --- Authentication Logic ---
 if 'authenticated' not in st.session_state:
@@ -32,8 +54,8 @@ if not st.session_state.authenticated:
     pwd_guess = st.text_input("Password", type="password")
     
     if st.button("Login", type="primary"):
-        # Check if the username exists and the password matches
-        if username_guess in USERS and USERS[username_guess] == pwd_guess:
+        # Check if the username exists in our dynamic memory and the password matches
+        if username_guess in st.session_state.USERS and st.session_state.USERS[username_guess] == pwd_guess:
             st.session_state.authenticated = True
             st.session_state.current_user = username_guess
             st.rerun()

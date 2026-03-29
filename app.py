@@ -86,6 +86,26 @@ def save_local_db():
 # Initialize the database on startup for the logged-in user
 load_local_db()
 
+# --- Cloud Dictionary Integration (Two-Way Memory) ---
+if 'cloud_models' not in st.session_state:
+    st.session_state.cloud_models = set()
+    # Silently load the master dictionary from Google Sheets on first login
+    if st.session_state.authenticated:
+        try:
+            credentials = dict(st.secrets["gcp_service_account"])
+            gc = gspread.service_account_from_dict(credentials)
+            sh = gc.open("Warehouse Live Sync")
+            try:
+                dict_sheet = sh.worksheet("Dictionary")
+                models = dict_sheet.col_values(1)
+                for m in models:
+                    if m and m.strip() != "Models":
+                        st.session_state.cloud_models.add(m.strip())
+            except gspread.exceptions.WorksheetNotFound:
+                pass # Will be created during the next Admin Sync
+        except Exception:
+            pass # Fail silently if no internet connection yet
+
 # --- Header ---
 colA, colB = st.columns([4, 1])
 with colA:

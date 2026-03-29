@@ -264,8 +264,25 @@ with reset_col2:
         with st.expander("🗑️ Wipe Everything"):
             st.warning("🚨 DANGER: This permanently erases all your models and counts. Are you sure?")
             if st.button("Yes, Wipe My Data", use_container_width=True, type="primary"):
+                # 1. Clear the Admin's current screen
                 st.session_state.data = {}
                 st.session_state.history = []
+                
+                # 2. GLOBALLY wipe ALL user data files off the hard drive
+                for file in glob.glob("inventory_data_*.json"):
+                    try:
+                        os.remove(file)
+                    except:
+                        pass
+                        
+                # 3. GLOBALLY wipe ALL user history files
+                for file in glob.glob("inventory_history_*.json"):
+                    try:
+                        os.remove(file)
+                    except:
+                        pass
+                
+                # 4. Save a fresh empty state and reload
                 save_local_db() 
                 st.rerun()
 

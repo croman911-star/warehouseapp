@@ -394,19 +394,18 @@ if st.session_state.current_user == "Admin":
                         # 3. Wipe the old sheet data and paste the fresh Master List
                         worksheet.clear()
                         
-                        # 4. Convert all data to plain text strings to prevent Google from getting confused
+                        # 4. Convert all data to plain text strings
                         data_to_upload = [df_master.columns.values.tolist()] + df_master.astype(str).values.tolist()
                         
-                        # 5. Push the data specifically starting at cell A1
-                        worksheet.update(range_name="A1", values=data_to_upload)
+                        # 5. Push the data using the most robust method (defaults to A1 automatically)
+                        worksheet.update(data_to_upload)
                         
                         st.success("✅ Successfully updated your Google Sheet!")
                         
+                    except gspread.exceptions.SpreadsheetNotFound:
+                        st.error("🚨 Error: Could not find a Google Sheet named exactly 'Warehouse Live Sync'. Please check the spelling/capitalization!")
                     except Exception as e:
-                        # If gspread throws the "200 Success" bug, we catch it and call it a win!
-                        if "200" in str(e):
-                            st.success("✅ Successfully updated your Google Sheet!")
-                        else:
-                            st.error(f"Failed to connect to Google Sheets. Error: {e}")
+                        # We removed the hack. Now we will see the EXACT error if it fails!
+                        st.error(f"🚨 Sync Failed! Exact Error: {repr(e)}")
     else:
         st.info("No data across any users yet.")

@@ -416,6 +416,25 @@ if st.session_state.current_user == "Admin":
                     
                     st.rerun()
 
+    # --- NEW: ADMIN TOOL TO CLEAR THE CLOUD AUDIT LOG ---
+    with st.expander("☁️ Clear Cloud Audit Log"):
+        st.warning("This will permanently erase the historical Audit Log in your Google Sheet. It will not affect your current inventory counts.")
+        if st.button("Erase Cloud Audit Log", use_container_width=True, type="primary"):
+            try:
+                with st.spinner("Connecting to Google to wipe the log..."):
+                    credentials = dict(st.secrets["gcp_service_account"])
+                    gc = gspread.service_account_from_dict(credentials)
+                    sh = gc.open("Warehouse Live Sync")
+                    try:
+                        audit_sheet = sh.worksheet("Audit Log")
+                        audit_sheet.clear()
+                        audit_sheet.update([["Audit Trail"]]) # Reset the header
+                        st.success("✅ The Cloud Audit Log has been completely wiped clean!")
+                    except gspread.exceptions.WorksheetNotFound:
+                        st.info("No Audit Log exists in the cloud yet, nothing to wipe.")
+            except Exception as e:
+                st.error(f"Failed to clear log: {e}")
+
 # --- ADMIN MASTER VIEW ---
 if st.session_state.current_user == "Admin":
     st.markdown("---")

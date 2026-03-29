@@ -165,6 +165,29 @@ def modify_inventory(direction):
     # Save to the hard drive immediately
     save_local_db()
     
+    # --- NEW: AUTO-CLOUD PUSH FOR NEW MODELS ---
+    if model not in st.session_state.cloud_models:
+        st.session_state.cloud_models.add(model)
+        try:
+            credentials = dict(st.secrets["gcp_service_account"])
+            gc = gspread.service_account_from_dict(credentials)
+            sh = gc.open("Warehouse Live Sync")
+            try:
+                dict_sheet = sh.worksheet("Dictionary")
+            except gspread.exceptions.WorksheetNotFound:
+                dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="1")
+                dict_sheet.update([["Models"]])
+            
+            # Instantly append the new model to the bottom of the Cloud Dictionary
+            dict_sheet.append_row([model])
+            
+            # Show a subtle, temporary popup to the worker
+            st.toast(f"☁️ '{model}' instantly synced to the Cloud Dictionary!")
+        except Exception:
+            # If the internet hiccups, fail silently so the worker isn't slowed down
+            pass
+    # ---------------------------------------------
+    
     if direction == "add":
         st.success(f"✓ {action_word} {qty} {model} ({loc}) [Total: {st.session_state.data[key]}]")
     else:
@@ -431,7 +454,22 @@ if st.session_state.current_user == "Admin":
                         # 5. Push the data using the most robust method (defaults to A1 automatically)
                         worksheet.update(data_to_upload)
                         
-                        st.success("✅ Successfully updated your Google Sheet!")
+                        # --- NEW: Push the Master Dictionary to the Cloud ---
+                        try:
+                            dict_sheet = sh.worksheet("Dictionary")
+                        except gspread.exceptions.WorksheetNotFound:
+                            # If the sheet doesn't exist yet, build it!
+                            dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="1")
+
+                        dict_sheet.clear()
+                        dict_upload = [["Models"]] + [[m] for m in unique_models]
+                        dict_sheet.update(dict_upload)
+                        
+                        # Update session memory immediately
+                        st.session_state.cloud_models.update(unique_models)
+                        # ----------------------------------------------------
+                        
+                        st.success("✅ Successfully updated your Google Sheet AND Cloud Dictionary!")
                         
                     except gspread.exceptions.SpreadsheetNotFound:
                         st.error("🚨 Error: Could not find a Google Sheet named exactly 'Warehouse Live Sync'. Please check the spelling/capitalization!")

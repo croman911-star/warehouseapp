@@ -347,12 +347,37 @@ if st.session_state.current_user == "Admin":
         
         now = datetime.now().strftime("%Y-%m-%d_%H-%M")
         csv_master = df_master.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 DOWNLOAD MASTER EXCEL (ALL USERS)",
-            data=csv_master,
-            file_name=f"Inventory_MASTER_{now}.csv",
-            mime="text/csv",
-            type="primary" # Makes the Admin download button stand out
-        )
+        
+        # --- NEW: Side-by-Side Download & Sync Buttons ---
+        col_dl, col_cloud = st.columns(2)
+        
+        with col_dl:
+            st.download_button(
+                label="📥 DOWNLOAD MASTER EXCEL",
+                data=csv_master,
+                file_name=f"Inventory_MASTER_{now}.csv",
+                mime="text/csv",
+                type="primary" 
+            )
+            
+        with col_cloud:
+            if st.button("☁️ Sync to Google Sheets", use_container_width=True):
+                with st.spinner("Syncing to the Cloud..."):
+                    try:
+                        # 1. Connect to Google using our hidden vault
+                        credentials = dict(st.secrets["gcp_service_account"])
+                        gc = gspread.service_account_from_dict(credentials)
+                        
+                        # 2. Open the exact Google Sheet by its title
+                        sh = gc.open("Warehouse Live Sync")
+                        worksheet = sh.sheet1
+                        
+                        # 3. Wipe the old sheet data and paste the fresh Master List
+                        worksheet.clear()
+                        worksheet.update([df_master.columns.values.tolist()] + df_master.values.tolist())
+                        
+                        st.success("✅ Successfully updated your Google Sheet!")
+                    except Exception as e:
+                        st.error(f"Failed to connect to Google Sheets. Error: {e}")
     else:
         st.info("No data across any users yet.")

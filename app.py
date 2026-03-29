@@ -190,27 +190,40 @@ def modify_inventory(direction):
     # Save to the hard drive immediately
     save_local_db()
     
-    # --- NEW: AUTO-CLOUD PUSH FOR NEW MODELS ---
-    if model not in st.session_state.cloud_models:
-        st.session_state.cloud_models.add(model)
-        try:
-            credentials = dict(st.secrets["gcp_service_account"])
-            gc = gspread.service_account_from_dict(credentials)
-            sh = gc.open("Warehouse Live Sync")
+    # --- NEW: AUTO-CLOUD PUSH FOR NEW MODELS & AUDIT LOG ---
+    try:
+        # Connect to Google (we do this once for both tasks to save time)
+        credentials = dict(st.secrets["gcp_service_account"])
+        gc = gspread.service_account_from_dict(credentials)
+        sh = gc.open("Warehouse Live Sync")
+        
+        # TASK 1: If it's a new model, update the Dictionary
+        if model not in st.session_state.cloud_models:
+            st.session_state.cloud_models.add(model)
             try:
                 dict_sheet = sh.worksheet("Dictionary")
             except gspread.exceptions.WorksheetNotFound:
                 dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="1")
                 dict_sheet.update([["Models"]])
             
-            # Instantly append the new model to the bottom of the Cloud Dictionary
             dict_sheet.append_row([model])
-            
-            # Show a subtle, temporary popup to the worker
             st.toast(f"☁️ '{model}' instantly synced to the Cloud Dictionary!")
-        except Exception:
-            # If the internet hiccups, fail silently so the worker isn't slowed down
-            pass
+            
+        # TASK 2: Instantly drop a record into the Audit Log
+        try:
+            audit_sheet = sh.worksheet("Audit Log")
+        except gspread.exceptions.WorksheetNotFound:
+            audit_sheet = sh.add_worksheet(title="Audit Log", rows="1000", cols="1")
+            audit_sheet.update([["Audit Trail"]])
+            
+        full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+        log_entry = f"[{full_timestamp}] {st.session_state.current_user} {action_word.upper()} {qty} of Model {model} (Location: {loc})"
+        
+        audit_sheet.append_row([log_entry])
+        
+    except Exception:
+        # If the internet hiccups or slows down, fail silently so the worker isn't stopped
+        pass
     # ---------------------------------------------
     
     if direction == "add":

@@ -435,6 +435,74 @@ if st.session_state.current_user == "Admin":
             except Exception as e:
                 st.error(f"Failed to clear log: {e}")
 
+    # --- NEW: ADMIN TOOL TO MANAGE ACCOUNTS ---
+    with st.expander("👥 Manage Worker Accounts"):
+        st.write("Add or remove worker accounts. (Admin accounts are locked in secrets and cannot be deleted here).")
+        
+        acc_col1, acc_col2 = st.columns(2)
+        
+        with acc_col1:
+            st.markdown("**Add New User**")
+            new_user = st.text_input("New Username").strip()
+            new_pwd = st.text_input("New Password").strip()
+            if st.button("Add User", type="primary", use_container_width=True):
+                if new_user and new_pwd:
+                    if new_user in st.session_state.USERS:
+                        st.warning(f"User '{new_user}' already exists!")
+                    else:
+                        try:
+                            credentials = dict(st.secrets["gcp_service_account"])
+                            gc = gspread.service_account_from_dict(credentials)
+                            sh = gc.open("Warehouse Live Sync")
+                            users_sheet = sh.worksheet("Users")
+                            
+                            # Add to Cloud
+                            users_sheet.append_row([new_user, new_pwd])
+                            
+                            # Add to Local Session Memory
+                            st.session_state.USERS[new_user] = new_pwd
+                            st.success(f"✅ User '{new_user}' added successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to add user to cloud: {e}")
+                else:
+                    st.warning("Please enter both username and password.")
+                    
+        with acc_col2:
+            st.markdown("**Delete User**")
+            # Prevent deleting the core Admin accounts defined in secrets
+            base_users = list(st.secrets["passwords"].keys())
+            deletable_users = [u for u in st.session_state.USERS.keys() if u not in base_users]
+            
+            if deletable_users:
+                user_to_delete = st.selectbox("Select Worker to Remove", ["-- Select --"] + deletable_users, label_visibility="collapsed")
+                if st.button("Delete User", use_container_width=True):
+                    if user_to_delete != "-- Select --":
+                        try:
+                            credentials = dict(st.secrets["gcp_service_account"])
+                            gc = gspread.service_account_from_dict(credentials)
+                            sh = gc.open("Warehouse Live Sync")
+                            users_sheet = sh.worksheet("Users")
+                            
+                            # Remove from Session Memory
+                            del st.session_state.USERS[user_to_delete]
+                            
+                            # Rebuild the Cloud Sheet
+                            cloud_upload = [["Username", "Password"]]
+                            for u, p in st.session_state.USERS.items():
+                                if u not in base_users:
+                                    cloud_upload.append([u, p])
+                                    
+                            users_sheet.clear()
+                            users_sheet.update(cloud_upload)
+                            
+                            st.success(f"✅ User '{user_to_delete}' has been removed.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete user: {e}")
+            else:
+                st.info("No cloud worker accounts to delete.")
+
 # --- ADMIN MASTER VIEW ---
 if st.session_state.current_user == "Admin":
     st.markdown("---")
@@ -500,33 +568,49 @@ if st.session_state.current_user == "Admin":
                         
                         # 2. Open the exact Google Sheet by its title
                         sh = gc.open("Warehouse Live Sync")
-                        worksheet = sh.sheet1
                         
-                        # 3. Wipe the old sheet data and paste the fresh Master List
+                        # --- NEW: SHIFT SNAPSHOTS (2-Day Rolling Memory) ---
+                        today_str = datetime.now().strftime("%Y-%m-%d")
+                        snapshot_title = f"Snapshot: {today_str}"
+                        
+                        # Create today's snapshot tab if it doesn't exist
+                        try:
+                            worksheet = sh.worksheet(snapshot_title)
+                        except gspread.exceptions.WorksheetNotFound:
+                            worksheet = sh.add_worksheet(title=snapshot_title, rows="1000", cols="5")
+                        
+                        # 3. Wipe today's snapshot (if re-syncing multiple times) and paste fresh data
                         worksheet.clear()
                         
                         # 4. Convert all data to plain text strings
                         data_to_upload = [df_master.columns.values.tolist()] + df_master.astype(str).values.tolist()
-                        
-                        # 5. Push the data using the most robust method (defaults to A1 automatically)
                         worksheet.update(data_to_upload)
                         
-                        # --- NEW: Push the Master Dictionary to the Cloud ---
+                        # 5. Enforce the 2-Day Limit (Keep only the 2 most recent snapshots)
+                        all_sheets = sh.worksheets()
+                        snapshot_sheets = [ws for ws in all_sheets if ws.title.startswith("Snapshot: ")]
+                        
+                        # Sort them chronologically by date
+                        snapshot_sheets.sort(key=lambda ws: ws.title)
+                        
+                        # If we have more than 2 snapshots, delete the oldest ones until we only have 2 left
+                        while len(snapshot_sheets) > 2:
+                            ws_to_delete = snapshot_sheets.pop(0)
+                            sh.del_worksheet(ws_to_delete)
+                        
+                        # --- Push the Master Dictionary to the Cloud ---
                         try:
                             dict_sheet = sh.worksheet("Dictionary")
                         except gspread.exceptions.WorksheetNotFound:
-                            # If the sheet doesn't exist yet, build it!
                             dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="1")
 
                         dict_sheet.clear()
                         dict_upload = [["Models"]] + [[m] for m in unique_models]
                         dict_sheet.update(dict_upload)
                         
-                        # Update session memory immediately
                         st.session_state.cloud_models.update(unique_models)
-                        # ----------------------------------------------------
                         
-                        st.success("✅ Successfully updated your Google Sheet AND Cloud Dictionary!")
+                        st.success(f"✅ Successfully created/updated '{snapshot_title}' and enforced the 2-day limit!")
                         
                     except gspread.exceptions.SpreadsheetNotFound:
                         st.error("🚨 Error: Could not find a Google Sheet named exactly 'Warehouse Live Sync'. Please check the spelling/capitalization!")

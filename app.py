@@ -624,13 +624,15 @@ if st.session_state.current_user == "Admin":
                         try:
                             dict_sheet = sh.worksheet("Dictionary")
                         except gspread.exceptions.WorksheetNotFound:
-                            dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="1")
+                            dict_sheet = sh.add_worksheet(title="Dictionary", rows="1000", cols="2")
 
                         dict_sheet.clear()
-                        dict_upload = [["Models"]] + [[m] for m in unique_models]
+                        dict_upload = [["Category", "Model"]]
+                        for cat, models_in_cat in st.session_state.cloud_models.items():
+                            for m in models_in_cat:
+                                dict_upload.append([cat, m])
+                                
                         dict_sheet.update(dict_upload)
-                        
-                        st.session_state.cloud_models.update(unique_models)
                         
                         st.success(f"✅ Successfully created/updated '{snapshot_title}' and enforced the 2-day limit!")
                         

@@ -118,6 +118,11 @@ for file in glob.glob("inventory_data_*.json"):
     except:
         pass
 
+# Add our indestructible cloud models to the dropdown list!
+if 'cloud_models' in st.session_state:
+    for m in st.session_state.cloud_models:
+        global_models.add(m)
+
 unique_models = sorted(list(global_models))
 
 # --- Input Area ---

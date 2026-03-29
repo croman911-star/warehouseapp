@@ -250,13 +250,44 @@ reset_col1, reset_col2 = st.columns(2)
 
 with reset_col1:
     with st.expander("🔄 Reset Counts to 0"):
-        st.warning("Are you sure? This sets all your counts to 0 but keeps the models in memory.")
-        if st.button("Yes, Reset Counts", use_container_width=True):
-            for key in st.session_state.data:
-                st.session_state.data[key] = 0
-            st.session_state.history = []  
-            save_local_db()
-            st.rerun()
+        if st.session_state.current_user == "Admin":
+            st.warning("Are you sure? This sets ALL USERS' counts to 0 but keeps the models in memory.")
+            if st.button("Yes, Reset All Counts", use_container_width=True):
+                # 1. Reset Admin's current session
+                for key in st.session_state.data:
+                    st.session_state.data[key] = 0
+                st.session_state.history = []
+                save_local_db()
+                
+                # 2. Globally reset all other users' data files
+                for file in glob.glob("inventory_data_*.json"):
+                    try:
+                        with open(file, "r") as f:
+                            other_data = json.load(f)
+                        for k in other_data:
+                            other_data[k] = 0  # Set count to 0 but keep the model name
+                        with open(file, "w") as f:
+                            json.dump(other_data, f)
+                    except:
+                        pass
+                        
+                # 3. Globally clear all history logs for the new shift
+                for file in glob.glob("inventory_history_*.json"):
+                    try:
+                        with open(file, "w") as f:
+                            json.dump([], f)
+                    except:
+                        pass
+                        
+                st.rerun()
+        else:
+            st.warning("Are you sure? This sets all your personal counts to 0 but keeps the models in memory.")
+            if st.button("Yes, Reset My Counts", use_container_width=True):
+                for key in st.session_state.data:
+                    st.session_state.data[key] = 0
+                st.session_state.history = []  
+                save_local_db()
+                st.rerun()
 
 with reset_col2:
     # Only Admin can see and use the Hard Reset

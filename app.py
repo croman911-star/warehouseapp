@@ -485,8 +485,12 @@ with reset_col1:
 with reset_col2:
     if st.session_state.current_user == "Admin":
         with st.expander("🗑️ Wipe Everything"):
-            st.warning("🚨 DANGER: This permanently erases all your models and counts.")
-            if st.button("Yes, Wipe My Data", use_container_width=True, type="primary"):
+            st.warning("🚨 DANGER: This permanently erases all your models and counts locally.")
+            st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")
+            confirm_wipe = st.text_input("Confirmation text", label_visibility="collapsed")
+            
+            # The button stays greyed out and unclickable until the text matches exactly
+            if st.button("Yes, Wipe My Data", use_container_width=True, type="primary", disabled=(confirm_wipe != "WIPE EVERYTHING")):
                 st.session_state.data = {}
                 st.session_state.history = {}
                 

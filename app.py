@@ -103,6 +103,10 @@ def save_local_db():
 load_local_db()
 
 # --- Cloud Dictionary Integration (Categories & Models) ---
+# NEW: Force Streamlit to forget the old memory structure if it's still holding onto it!
+if 'cloud_models' in st.session_state and not isinstance(st.session_state.cloud_models, dict):
+    del st.session_state.cloud_models
+
 if 'cloud_models' not in st.session_state:
     st.session_state.cloud_models = {}
     if st.session_state.authenticated:
@@ -580,6 +584,12 @@ if st.session_state.current_user == "Admin":
     master_rows = []
     master_models = sorted(list(set([k.split("|")[0] for k in master_data.keys()])))
     
+    # NEW: Reverse lookup for the Master list
+    master_model_to_cat = {}
+    for cat, models in st.session_state.cloud_models.items():
+        for m in models:
+            master_model_to_cat[m] = cat
+    
     for m in master_models:
         wh = master_data.get(f"{m}|Warehouse", 0)
         asm = master_data.get(f"{m}|Assembly", 0)
@@ -588,6 +598,7 @@ if st.session_state.current_user == "Admin":
         
         if total != 0 or susp != 0:
             master_rows.append({
+                "Category": master_model_to_cat.get(m, "Apk"), # NEW: Add category to master
                 "Model": m, 
                 "Warehouse": wh, 
                 "Assembly": asm, 
@@ -597,6 +608,43 @@ if st.session_state.current_user == "Admin":
             
     if master_rows:
         df_master = pd.DataFrame(master_rows)
+        # NEW: Sort by Category first, then Model
+        df_master = df_master.sort_values(by=["Category", "Model"])
+        
+        # --- 🦅 THE EAGLE EYE (VISUAL ANALYTICS) ---
+        st.markdown("### 🦅 Eagle Eye Dashboard")
+        
+        # 1. High-Level Metrics
+        met1, met2, met3 = st.columns(3)
+        met1.metric("📦 Total Items in Stock", f"{int(df_master['Total'].sum()):,}")
+        met2.metric("🏷️ Active Categories", df_master["Category"].nunique())
+        met3.metric("🚨 Suspect (Bad) Parts", f"{int(df_master['Suspect (Bad)'].sum()):,}", delta_color="inverse")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # 2. Visual Charts
+        chart_col1, chart_col2 = st.columns(2)
+        
+        with chart_col1:
+            st.markdown("**Total Inventory by Category**")
+            # Group all items by their category
+            cat_totals = df_master.groupby("Category")["Total"].sum()
+            if not cat_totals.empty:
+                st.bar_chart(cat_totals)
+                
+        with chart_col2:
+            st.markdown("**Warehouse vs Assembly (Top 10 Models)**")
+            # Find the 10 models with the highest counts
+            top_models = df_master.sort_values("Total", ascending=False).head(10)
+            if not top_models.empty:
+                # Plot Warehouse and Assembly side-by-side
+                chart_data = top_models.set_index("Model")[["Warehouse", "Assembly"]]
+                st.bar_chart(chart_data, color=["#1f77b4", "#ff7f0e"]) # Blue and Orange
+
+        st.markdown("---")
+        st.markdown("### 📋 Master Data Table")
+        # ------------------------------------------
+
         st.dataframe(df_master, use_container_width=True, hide_index=True)
         
         now = datetime.now().strftime("%Y-%m-%d_%H-%M")

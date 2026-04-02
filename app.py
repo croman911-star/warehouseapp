@@ -103,7 +103,7 @@ def save_local_db():
 load_local_db()
 
 # --- Cloud Dictionary Integration (Categories & Models) ---
-# NEW: Force Streamlit to forget the old memory structure if it's still holding onto it!
+# Force Streamlit to forget the old memory structure if it's still holding onto it!
 if 'cloud_models' in st.session_state and not isinstance(st.session_state.cloud_models, dict):
     del st.session_state.cloud_models
 
@@ -181,7 +181,11 @@ categories = sorted(list(st.session_state.cloud_models.keys()))
 
 cat_col, mod_col = st.columns(2)
 with cat_col:
-    selected_cat = st.selectbox("Category", categories + ["➕ Add New Category"])
+    cat_options = categories.copy()
+    if st.session_state.current_user == "Admin":
+        cat_options.append("➕ Add New Category")
+        
+    selected_cat = st.selectbox("Category", cat_options)
     if selected_cat == "➕ Add New Category":
         actual_cat = st.text_input("New Category Name").strip()
     else:
@@ -347,8 +351,12 @@ report_rows = []
 
 # Gather unique models from both cloud categories and local data
 unique_models = set()
-for models in st.session_state.cloud_models.values():
+model_to_cat = {}
+for cat, models in st.session_state.cloud_models.items():
     unique_models.update(models)
+    for m in models:
+        model_to_cat[m] = cat
+
 for k in st.session_state.data.keys():
     unique_models.add(k.split("|")[0])
 
@@ -360,6 +368,7 @@ for m in sorted(list(unique_models)):
     
     if total != 0 or susp != 0:
         report_rows.append({
+            "Category": model_to_cat.get(m, "Apk"),
             "Model": m, 
             "Warehouse": wh, 
             "Assembly": asm, 
@@ -369,6 +378,8 @@ for m in sorted(list(unique_models)):
 
 if report_rows:
     df = pd.DataFrame(report_rows)
+    df = df.sort_values(by=["Category", "Model"])
+    
     search = st.text_input("🔍 Search Models to Filter:")
     if search:
         df = df[df["Model"].str.contains(search.upper())]
@@ -489,6 +500,31 @@ if st.session_state.current_user == "Admin":
                             pass
                     st.rerun()
 
+    with st.expander("❌ Delete a Category"):
+        st.write("Remove a category. Any models inside it will be safely moved to the default 'Apk' category so no inventory is lost.")
+        cat_to_del = st.selectbox("Select Category to Delete", ["-- Select --"] + [c for c in categories if c != "Apk"])
+        if st.button("Delete Category", use_container_width=True, type="primary"):
+            if cat_to_del != "-- Select --":
+                if cat_to_del in st.session_state.cloud_models:
+                    st.session_state.cloud_models["Apk"].update(st.session_state.cloud_models[cat_to_del])
+                    del st.session_state.cloud_models[cat_to_del]
+                    
+                    try:
+                        credentials = dict(st.secrets["gcp_service_account"])
+                        gc = gspread.service_account_from_dict(credentials)
+                        sh = gc.open("Warehouse Live Sync")
+                        dict_sheet = sh.worksheet("Dictionary")
+                        dict_sheet.clear()
+                        dict_upload = [["Category", "Model"]]
+                        for c, models_in_cat in st.session_state.cloud_models.items():
+                            for m_val in models_in_cat:
+                                dict_upload.append([c, m_val])
+                        dict_sheet.update(dict_upload)
+                        st.success(f"✅ Category '{cat_to_del}' deleted. Its models were safely moved to 'Apk'.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to sync deletion to cloud: {e}")
+
     with st.expander("☁️ Clear Cloud Audit Log"):
         st.warning("This will permanently erase the historical Audit Log in your Google Sheet.")
         if st.button("Erase Cloud Audit Log", use_container_width=True, type="primary"):
@@ -584,7 +620,6 @@ if st.session_state.current_user == "Admin":
     master_rows = []
     master_models = sorted(list(set([k.split("|")[0] for k in master_data.keys()])))
     
-    # NEW: Reverse lookup for the Master list
     master_model_to_cat = {}
     for cat, models in st.session_state.cloud_models.items():
         for m in models:
@@ -598,7 +633,7 @@ if st.session_state.current_user == "Admin":
         
         if total != 0 or susp != 0:
             master_rows.append({
-                "Category": master_model_to_cat.get(m, "Apk"), # NEW: Add category to master
+                "Category": master_model_to_cat.get(m, "Apk"),
                 "Model": m, 
                 "Warehouse": wh, 
                 "Assembly": asm, 
@@ -608,13 +643,11 @@ if st.session_state.current_user == "Admin":
             
     if master_rows:
         df_master = pd.DataFrame(master_rows)
-        # NEW: Sort by Category first, then Model
         df_master = df_master.sort_values(by=["Category", "Model"])
         
         # --- 🦅 THE EAGLE EYE (VISUAL ANALYTICS) ---
         st.markdown("### 🦅 Eagle Eye Dashboard")
         
-        # 1. High-Level Metrics
         met1, met2, met3 = st.columns(3)
         met1.metric("📦 Total Items in Stock", f"{int(df_master['Total'].sum()):,}")
         met2.metric("🏷️ Active Categories", df_master["Category"].nunique())
@@ -622,29 +655,23 @@ if st.session_state.current_user == "Admin":
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # 2. Visual Charts
         chart_col1, chart_col2 = st.columns(2)
-        
         with chart_col1:
             st.markdown("**Total Inventory by Category**")
-            # Group all items by their category
             cat_totals = df_master.groupby("Category")["Total"].sum()
             if not cat_totals.empty:
                 st.bar_chart(cat_totals)
                 
         with chart_col2:
             st.markdown("**Warehouse vs Assembly (Top 10 Models)**")
-            # Find the 10 models with the highest counts
             top_models = df_master.sort_values("Total", ascending=False).head(10)
             if not top_models.empty:
-                # Plot Warehouse and Assembly side-by-side
                 chart_data = top_models.set_index("Model")[["Warehouse", "Assembly"]]
-                st.bar_chart(chart_data, color=["#1f77b4", "#ff7f0e"]) # Blue and Orange
+                st.bar_chart(chart_data, color=["#1f77b4", "#ff7f0e"])
 
         st.markdown("---")
         st.markdown("### 📋 Master Data Table")
-        # ------------------------------------------
-
+        
         st.dataframe(df_master, use_container_width=True, hide_index=True)
         
         now = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -669,7 +696,6 @@ if st.session_state.current_user == "Admin":
                         gc = gspread.service_account_from_dict(credentials)
                         sh = gc.open("Warehouse Live Sync")
                         
-                        # SHIFT SNAPSHOTS
                         today_str = datetime.now().strftime("%Y-%m-%d")
                         snapshot_title = f"Snapshot: {today_str}"
                         
@@ -682,7 +708,6 @@ if st.session_state.current_user == "Admin":
                         data_to_upload = [df_master.columns.values.tolist()] + df_master.astype(str).values.tolist()
                         worksheet.update(data_to_upload)
                         
-                        # 2-Day Limit
                         all_sheets = sh.worksheets()
                         snapshot_sheets = [ws for ws in all_sheets if ws.title.startswith("Snapshot: ")]
                         snapshot_sheets.sort(key=lambda ws: ws.title)
@@ -691,7 +716,6 @@ if st.session_state.current_user == "Admin":
                             ws_to_delete = snapshot_sheets.pop(0)
                             sh.del_worksheet(ws_to_delete)
                         
-                        # Push Master Dictionary (Categorized)
                         try:
                             dict_sheet = sh.worksheet("Dictionary")
                         except gspread.exceptions.WorksheetNotFound:
@@ -700,8 +724,8 @@ if st.session_state.current_user == "Admin":
                         dict_sheet.clear()
                         dict_upload = [["Category", "Model"]]
                         for cat, models_in_cat in st.session_state.cloud_models.items():
-                            for m in models_in_cat:
-                                dict_upload.append([cat, m])
+                            for m_val in models_in_cat:
+                                dict_upload.append([cat, m_val])
                                 
                         dict_sheet.update(dict_upload)
                         

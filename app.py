@@ -119,15 +119,12 @@ if 'cloud_models' not in st.session_state:
                 dict_sheet = sh.worksheet("Dictionary")
                 records = dict_sheet.get_all_records()
                 
-                # --- NEW: THE CHUN KUK DO INTERCEPT ---
-                # This intercepts the data from Google and violently forces any "alc" ghosts into "Apk"
+                # Removed the aggressive intercept! All categories are allowed now.
                 latest_mapping = {}
                 for row in records:
                     c = str(row.get("Category", "")).strip()
                     m = str(row.get("Model", "")).strip()
                     if c and m:
-                        if c.lower() == "alc":
-                            c = "Apk"  # Force 'alc' to become 'Apk' instantly!
                         latest_mapping[m] = c 
                         
                 for m, c in latest_mapping.items():
@@ -142,12 +139,6 @@ if 'cloud_models' not in st.session_state:
 # Force "Apk" to exist as the master default
 if "Apk" not in st.session_state.cloud_models:
     st.session_state.cloud_models["Apk"] = set()
-
-# Second layer of defense: If 'alc' is stuck in your current browser memory, destroy it!
-keys_to_delete = [c for c in st.session_state.cloud_models.keys() if c.lower() == "alc"]
-for c in keys_to_delete:
-    st.session_state.cloud_models["Apk"].update(st.session_state.cloud_models[c])
-    del st.session_state.cloud_models[c]
 
 # Sweep legacy local data to ensure it gets assigned to Apk
 for file in glob.glob("inventory_data_*.json"):

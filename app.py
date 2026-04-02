@@ -369,7 +369,7 @@ for m in sorted(list(unique_models)):
     
     if total != 0 or susp != 0:
         report_rows.append({
-            "Category": model_to_cat.get(m, "Apk"),
+            "_HiddenCat": model_to_cat.get(m, "Apk"), # Changed to a hidden background variable
             "Model": m, 
             "Warehouse": wh, 
             "Assembly": asm, 
@@ -379,22 +379,25 @@ for m in sorted(list(unique_models)):
 
 if report_rows:
     df = pd.DataFrame(report_rows)
-    df = df.sort_values(by=["Category", "Model"])
+    df = df.sort_values(by=["_HiddenCat", "Model"])
+    
+    # Hide the category from the actual screen
+    display_df = df.drop(columns=["_HiddenCat"])
     
     search = st.text_input("🔍 Search Models to Filter:")
     if search:
-        df = df[df["Model"].str.contains(search.upper())]
+        display_df = display_df[display_df["Model"].str.contains(search.upper())]
         
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
     
     now = datetime.now().strftime("%Y-%m-%d_%H-%M")
     
-    # --- NEW: TABBED EXCEL DOWNLOAD FOR WORKERS ---
+    # --- TABBED EXCEL DOWNLOAD FOR WORKERS ---
     try:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            for cat in sorted(df['Category'].unique()):
-                cat_df = df[df['Category'] == cat].drop(columns=['Category'])
+            for cat in sorted(df['_HiddenCat'].unique()):
+                cat_df = df[df['_HiddenCat'] == cat].drop(columns=['_HiddenCat'])
                 cat_df.to_excel(writer, sheet_name=str(cat)[:31], index=False)
         file_data = output.getvalue()
         file_name = f"Inventory_{st.session_state.current_user}_{now}.xlsx"
@@ -402,8 +405,8 @@ if report_rows:
         btn_label = "📥 DOWNLOAD EXCEL (SEPARATE TABS)"
     except ModuleNotFoundError:
         csv_text = ""
-        for cat in sorted(df['Category'].unique()):
-            cat_df = df[df['Category'] == cat].drop(columns=['Category'])
+        for cat in sorted(df['_HiddenCat'].unique()):
+            cat_df = df[df['_HiddenCat'] == cat].drop(columns=['_HiddenCat'])
             csv_text += f"--- {cat.upper()} ---\n"
             csv_text += cat_df.to_csv(index=False)
             csv_text += "\n"

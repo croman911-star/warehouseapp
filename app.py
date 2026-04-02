@@ -561,6 +561,7 @@ if st.session_state.current_user == "Admin":
         with del_col2:
             if st.button("Delete Model", use_container_width=True, type="primary"):
                 if model_to_delete and model_to_delete != "-- Select --":
+                    # 1. Erase the local inventory counts
                     keys_to_delete = [k for k in st.session_state.data.keys() if k.startswith(f"{model_to_delete}|")]
                     for k in keys_to_delete:
                         del st.session_state.data[k]
@@ -580,6 +581,28 @@ if st.session_state.current_user == "Admin":
                                     json.dump(other_data, f)
                         except:
                             pass
+                            
+                    # 2. Erase the model from the Cloud Dictionary memory
+                    for c in list(st.session_state.cloud_models.keys()):
+                        if model_to_delete in st.session_state.cloud_models[c]:
+                            st.session_state.cloud_models[c].remove(model_to_delete)
+                            
+                    # 3. Punch through to the Cloud! Instantly update the Google Sheet so it doesn't come back
+                    try:
+                        credentials = dict(st.secrets["gcp_service_account"])
+                        gc = gspread.service_account_from_dict(credentials)
+                        sh = gc.open("Warehouse Live Sync")
+                        dict_sheet = sh.worksheet("Dictionary")
+                        dict_sheet.clear()
+                        dict_upload = [["Category", "Model"]]
+                        for c, models_in_cat in st.session_state.cloud_models.items():
+                            for m_val in models_in_cat:
+                                dict_upload.append([c, m_val])
+                        dict_sheet.update(dict_upload)
+                        st.success(f"✅ '{model_to_delete}' completely erased from counts and dictionary!")
+                    except Exception as e:
+                        st.error(f"Failed to erase from cloud: {e}")
+
                     st.rerun()
 
     with st.expander("❌ Delete a Category"):

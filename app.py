@@ -5,6 +5,7 @@ import json
 import os
 import glob
 import gspread
+import io
 
 # --- Page Setup ---
 st.set_page_config(page_title="Warehouse Inventory", page_icon="📦", layout="centered")
@@ -387,12 +388,35 @@ if report_rows:
     st.dataframe(df, use_container_width=True, hide_index=True)
     
     now = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    csv = df.to_csv(index=False).encode('utf-8')
+    
+    # --- NEW: TABBED EXCEL DOWNLOAD FOR WORKERS ---
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            for cat in sorted(df['Category'].unique()):
+                cat_df = df[df['Category'] == cat].drop(columns=['Category'])
+                cat_df.to_excel(writer, sheet_name=str(cat)[:31], index=False)
+        file_data = output.getvalue()
+        file_name = f"Inventory_{st.session_state.current_user}_{now}.xlsx"
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        btn_label = "📥 DOWNLOAD EXCEL (SEPARATE TABS)"
+    except ModuleNotFoundError:
+        csv_text = ""
+        for cat in sorted(df['Category'].unique()):
+            cat_df = df[df['Category'] == cat].drop(columns=['Category'])
+            csv_text += f"--- {cat.upper()} ---\n"
+            csv_text += cat_df.to_csv(index=False)
+            csv_text += "\n"
+        file_data = csv_text.encode('utf-8')
+        file_name = f"Inventory_{st.session_state.current_user}_{now}.csv"
+        mime_type = "text/csv"
+        btn_label = "📥 DOWNLOAD CSV (SEPARATED)"
+
     st.download_button(
-        label="📥 DOWNLOAD EXCEL",
-        data=csv,
-        file_name=f"Inventory_{st.session_state.current_user}_{now}.csv",
-        mime="text/csv",
+        label=btn_label,
+        data=file_data,
+        file_name=file_name,
+        mime=mime_type,
     )
 else:
     st.info("No items currently in stock. Add items above.")

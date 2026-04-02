@@ -118,13 +118,22 @@ if 'cloud_models' not in st.session_state:
             try:
                 dict_sheet = sh.worksheet("Dictionary")
                 records = dict_sheet.get_all_records()
+                
+                # --- NEW: THE CHUN KUK DO INTERCEPT ---
+                # This intercepts the data from Google and violently forces any "alc" ghosts into "Apk"
+                latest_mapping = {}
                 for row in records:
                     c = str(row.get("Category", "")).strip()
                     m = str(row.get("Model", "")).strip()
                     if c and m:
-                        if c not in st.session_state.cloud_models:
-                            st.session_state.cloud_models[c] = set()
-                        st.session_state.cloud_models[c].add(m)
+                        if c.lower() == "alc":
+                            c = "Apk"  # Force 'alc' to become 'Apk' instantly!
+                        latest_mapping[m] = c 
+                        
+                for m, c in latest_mapping.items():
+                    if c not in st.session_state.cloud_models:
+                        st.session_state.cloud_models[c] = set()
+                    st.session_state.cloud_models[c].add(m)
             except gspread.exceptions.WorksheetNotFound:
                 pass 
         except Exception:
@@ -133,6 +142,12 @@ if 'cloud_models' not in st.session_state:
 # Force "Apk" to exist as the master default
 if "Apk" not in st.session_state.cloud_models:
     st.session_state.cloud_models["Apk"] = set()
+
+# Second layer of defense: If 'alc' is stuck in your current browser memory, destroy it!
+keys_to_delete = [c for c in st.session_state.cloud_models.keys() if c.lower() == "alc"]
+for c in keys_to_delete:
+    st.session_state.cloud_models["Apk"].update(st.session_state.cloud_models[c])
+    del st.session_state.cloud_models[c]
 
 # Sweep legacy local data to ensure it gets assigned to Apk
 for file in glob.glob("inventory_data_*.json"):
@@ -682,19 +697,12 @@ if st.session_state.current_user == "Admin":
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            st.markdown("**Total Inventory by Category**")
-            cat_totals = df_master.groupby("_HiddenCat")["Total"].sum()
-            if not cat_totals.empty:
-                st.bar_chart(cat_totals)
-                
-        with chart_col2:
-            st.markdown("**Warehouse vs Assembly (Top 10 Models)**")
-            top_models = df_master.sort_values("Total", ascending=False).head(10)
-            if not top_models.empty:
-                chart_data = top_models.set_index("Model")[["Warehouse", "Assembly"]]
-                st.bar_chart(chart_data, color=["#1f77b4", "#ff7f0e"])
+        # We removed the Category chart and let the Top 10 Models chart take the full width!
+        st.markdown("**Warehouse vs Assembly (Top 10 Models)**")
+        top_models = df_master.sort_values("Total", ascending=False).head(10)
+        if not top_models.empty:
+            chart_data = top_models.set_index("Model")[["Warehouse", "Assembly"]]
+            st.bar_chart(chart_data, color=["#1f77b4", "#ff7f0e"])
 
         st.markdown("---")
         st.markdown("### 📋 Master Data Table")

@@ -346,6 +346,25 @@ with btn_col4:
                 st.session_state.data[last["key"]] -= change
                 
             save_local_db()
+            
+            # --- NEW: Punch the Undo action through to the Cloud Audit Log! ---
+            try:
+                credentials = dict(st.secrets["gcp_service_account"])
+                gc = gspread.service_account_from_dict(credentials)
+                sh = gc.open("Warehouse Live Sync")
+                audit_sheet = sh.worksheet("Audit Log")
+                full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                
+                if last.get("action") == "Moved":
+                    undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed move of {last['qty']} x {last['model']} ({last['loc']} ➔ {last.get('to_loc')})"
+                else:
+                    undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed {last['action'].lower()} of {last['qty']} x {last['model']} ({last['loc']})"
+                
+                audit_sheet.append_row([undo_msg])
+            except Exception:
+                pass
+            # ----------------------------------------------------------------
+
             st.info(f"↺ Undid last action for {last['model']}")
             st.rerun()
 

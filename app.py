@@ -657,7 +657,7 @@ if st.session_state.current_user == "Admin":
         
         if total != 0 or susp != 0:
             master_rows.append({
-                "Category": master_model_to_cat.get(m, "Apk"),
+                "_HiddenCat": master_model_to_cat.get(m, "Apk"), # Changed to hidden
                 "Model": m, 
                 "Warehouse": wh, 
                 "Assembly": asm, 
@@ -667,14 +667,14 @@ if st.session_state.current_user == "Admin":
             
     if master_rows:
         df_master = pd.DataFrame(master_rows)
-        df_master = df_master.sort_values(by=["Category", "Model"])
+        df_master = df_master.sort_values(by=["_HiddenCat", "Model"])
         
         # --- 🦅 THE EAGLE EYE (VISUAL ANALYTICS) ---
         st.markdown("### 🦅 Eagle Eye Dashboard")
         
         met1, met2, met3 = st.columns(3)
         met1.metric("📦 Total Items in Stock", f"{int(df_master['Total'].sum()):,}")
-        met2.metric("🏷️ Active Categories", df_master["Category"].nunique())
+        met2.metric("🏷️ Active Categories", df_master["_HiddenCat"].nunique())
         met3.metric("🚨 Suspect (Bad) Parts", f"{int(df_master['Suspect (Bad)'].sum()):,}", delta_color="inverse")
         
         st.markdown("<br>", unsafe_allow_html=True)
@@ -682,7 +682,7 @@ if st.session_state.current_user == "Admin":
         chart_col1, chart_col2 = st.columns(2)
         with chart_col1:
             st.markdown("**Total Inventory by Category**")
-            cat_totals = df_master.groupby("Category")["Total"].sum()
+            cat_totals = df_master.groupby("_HiddenCat")["Total"].sum()
             if not cat_totals.empty:
                 st.bar_chart(cat_totals)
                 
@@ -696,7 +696,8 @@ if st.session_state.current_user == "Admin":
         st.markdown("---")
         st.markdown("### 📋 Master Data Table")
         
-        st.dataframe(df_master, use_container_width=True, hide_index=True)
+        display_df_master = df_master.drop(columns=["_HiddenCat"])
+        st.dataframe(display_df_master, use_container_width=True, hide_index=True)
         
         now = datetime.now().strftime("%Y-%m-%d_%H-%M")
         
@@ -704,8 +705,8 @@ if st.session_state.current_user == "Admin":
         try:
             output_master = io.BytesIO()
             with pd.ExcelWriter(output_master, engine='openpyxl') as writer:
-                for cat in sorted(df_master['Category'].unique()):
-                    cat_df = df_master[df_master['Category'] == cat].drop(columns=['Category'])
+                for cat in sorted(df_master['_HiddenCat'].unique()):
+                    cat_df = df_master[df_master['_HiddenCat'] == cat].drop(columns=['_HiddenCat'])
                     cat_df.to_excel(writer, sheet_name=str(cat)[:31], index=False)
             file_data_master = output_master.getvalue()
             file_name_master = f"Inventory_MASTER_{now}.xlsx"
@@ -713,8 +714,8 @@ if st.session_state.current_user == "Admin":
             btn_label_master = "📥 DOWNLOAD MASTER EXCEL (TABS)"
         except ModuleNotFoundError:
             csv_text_master = ""
-            for cat in sorted(df_master['Category'].unique()):
-                cat_df = df_master[df_master['Category'] == cat].drop(columns=['Category'])
+            for cat in sorted(df_master['_HiddenCat'].unique()):
+                cat_df = df_master[df_master['_HiddenCat'] == cat].drop(columns=['_HiddenCat'])
                 csv_text_master += f"--- {cat.upper()} ---\n"
                 csv_text_master += cat_df.to_csv(index=False)
                 csv_text_master += "\n"
@@ -751,7 +752,8 @@ if st.session_state.current_user == "Admin":
                             worksheet = sh.add_worksheet(title=snapshot_title, rows="1000", cols="5")
                         
                         worksheet.clear()
-                        data_to_upload = [df_master.columns.values.tolist()] + df_master.astype(str).values.tolist()
+                        # Make sure we don't upload the hidden category to the daily snapshot!
+                        data_to_upload = [display_df_master.columns.values.tolist()] + display_df_master.astype(str).values.tolist()
                         worksheet.update(data_to_upload)
                         
                         all_sheets = sh.worksheets()

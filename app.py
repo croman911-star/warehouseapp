@@ -509,15 +509,22 @@ st.markdown("---")
 if st.session_state.current_user == "Admin":
     # --- NEW TOOL: RE-ASSIGN CATEGORIES ---
     with st.expander("🔀 Move Model to Another Category"):
-        st.write("Instantly reorganize your catalog. Select a model and send it to a different category.")
+        st.write("Instantly reorganize your catalog. Select a destination category, then pick the model you want to move into it.")
         move_col1, move_col2, move_col3 = st.columns([2, 2, 1])
         
         with move_col1:
-            all_known_models = sorted(list(unique_models))
-            model_to_move = st.selectbox("Select model:", ["-- Select --"] + all_known_models, key="move_mod")
+            target_cat = st.selectbox("1. Destination Category:", ["-- Select --"] + categories, key="move_cat")
             
         with move_col2:
-            target_cat = st.selectbox("Select new category:", ["-- Select --"] + categories, key="move_cat")
+            all_known_models = sorted(list(unique_models))
+            if target_cat != "-- Select --":
+                # Filter out models that are ALREADY inside the target category
+                models_in_target = st.session_state.cloud_models.get(target_cat, set())
+                available_models = [m for m in all_known_models if m not in models_in_target]
+            else:
+                available_models = all_known_models
+                
+            model_to_move = st.selectbox("2. Select Model to Move:", ["-- Select --"] + available_models, key="move_mod")
             
         with move_col3:
             st.markdown("<br>", unsafe_allow_html=True) # Aligns the button with the dropdowns

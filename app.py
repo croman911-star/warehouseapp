@@ -512,6 +512,51 @@ with reset_col2:
 st.markdown("---")
 
 if st.session_state.current_user == "Admin":
+    # --- NEW TOOL: RE-ASSIGN CATEGORIES ---
+    with st.expander("🔀 Move Model to Another Category"):
+        st.write("Instantly reorganize your catalog. Select a model and send it to a different category.")
+        move_col1, move_col2, move_col3 = st.columns([2, 2, 1])
+        
+        with move_col1:
+            all_known_models = sorted(list(unique_models))
+            model_to_move = st.selectbox("Select model:", ["-- Select --"] + all_known_models, key="move_mod")
+            
+        with move_col2:
+            target_cat = st.selectbox("Select new category:", ["-- Select --"] + categories, key="move_cat")
+            
+        with move_col3:
+            st.markdown("<br>", unsafe_allow_html=True) # Aligns the button with the dropdowns
+            if st.button("Move", use_container_width=True, type="primary"):
+                if model_to_move != "-- Select --" and target_cat != "-- Select --":
+                    # 1. Remove from all old categories
+                    for c in list(st.session_state.cloud_models.keys()):
+                        if model_to_move in st.session_state.cloud_models[c]:
+                            st.session_state.cloud_models[c].remove(model_to_move)
+                    
+                    # 2. Add to the new category
+                    if target_cat not in st.session_state.cloud_models:
+                        st.session_state.cloud_models[target_cat] = set()
+                    st.session_state.cloud_models[target_cat].add(model_to_move)
+                    
+                    # 3. Force a cloud sync so it remembers forever
+                    try:
+                        credentials = dict(st.secrets["gcp_service_account"])
+                        gc = gspread.service_account_from_dict(credentials)
+                        sh = gc.open("Warehouse Live Sync")
+                        dict_sheet = sh.worksheet("Dictionary")
+                        dict_sheet.clear()
+                        dict_upload = [["Category", "Model"]]
+                        for c, models_in_cat in st.session_state.cloud_models.items():
+                            for m_val in models_in_cat:
+                                dict_upload.append([c, m_val])
+                        dict_sheet.update(dict_upload)
+                        st.success(f"✅ Model '{model_to_move}' successfully moved to '{target_cat}'!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to sync category move to cloud: {e}")
+                else:
+                    st.warning("Please select both a model and a destination category.")
+
     with st.expander("❌ Delete a Specific Model (Fix Typos)"):
         st.write("Select a model to permanently remove from memory:")
         del_col1, del_col2 = st.columns([3, 1])

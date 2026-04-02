@@ -675,16 +675,38 @@ if st.session_state.current_user == "Admin":
         st.dataframe(df_master, use_container_width=True, hide_index=True)
         
         now = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        csv_master = df_master.to_csv(index=False).encode('utf-8')
+        
+        # --- NEW: MASTER TABBED EXCEL DOWNLOAD ---
+        try:
+            output_master = io.BytesIO()
+            with pd.ExcelWriter(output_master, engine='openpyxl') as writer:
+                for cat in sorted(df_master['Category'].unique()):
+                    cat_df = df_master[df_master['Category'] == cat].drop(columns=['Category'])
+                    cat_df.to_excel(writer, sheet_name=str(cat)[:31], index=False)
+            file_data_master = output_master.getvalue()
+            file_name_master = f"Inventory_MASTER_{now}.xlsx"
+            mime_type_master = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            btn_label_master = "📥 DOWNLOAD MASTER EXCEL (TABS)"
+        except ModuleNotFoundError:
+            csv_text_master = ""
+            for cat in sorted(df_master['Category'].unique()):
+                cat_df = df_master[df_master['Category'] == cat].drop(columns=['Category'])
+                csv_text_master += f"--- {cat.upper()} ---\n"
+                csv_text_master += cat_df.to_csv(index=False)
+                csv_text_master += "\n"
+            file_data_master = csv_text_master.encode('utf-8')
+            file_name_master = f"Inventory_MASTER_{now}.csv"
+            mime_type_master = "text/csv"
+            btn_label_master = "📥 DOWNLOAD MASTER CSV (SEPARATED)"
         
         col_dl, col_cloud = st.columns(2)
         
         with col_dl:
             st.download_button(
-                label="📥 DOWNLOAD MASTER EXCEL",
-                data=csv_master,
-                file_name=f"Inventory_MASTER_{now}.csv",
-                mime="text/csv",
+                label=btn_label_master,
+                data=file_data_master,
+                file_name=file_name_master,
+                mime=mime_type_master,
                 type="primary" 
             )
             

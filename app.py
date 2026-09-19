@@ -581,9 +581,8 @@ if st.session_state.current_user == "Admin":
                     with open(USER_FILE, "w") as f:
                         json.dump(auth_db, f)
                     st.success(f"Account '{del_u}' deleted!")
-                    st.rerun()
-   
-    with st.expander("🗑️ Wipe Everything"):
+                    st.rerun()   
+  with st.expander("🗑️ Wipe Everything"):
         st.warning("🚨 DANGER: This permanently erases all your models and counts locally.")
         st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")
         confirm_wipe = st.text_input("Confirmation text", label_visibility="collapsed")

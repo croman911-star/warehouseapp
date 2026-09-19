@@ -348,10 +348,20 @@ with st.expander("🧹 Reset My Daily Count"):
     st.write("Start a fresh slate for the day. This zeroes out **only your** personal counts.")
     confirm_my_reset = st.checkbox("I am ready to clear my board.", key="chk_my_reset")
     if st.button("Reset My Count", type="primary", disabled=not confirm_my_reset):
+        # 1. Clear active memory
         st.session_state.data = {}
         st.session_state.history = []
+        
+        # --- NEW: Hard-delete this specific worker's files to bypass Windows locks! ---
+        try: os.remove(get_data_file())
+        except: pass
+        try: os.remove(get_hist_file())
+        except: pass
+        
+        # 2. Create fresh empty files
         save_local_db()
         
+        # 3. Log it in the cloud
         if st.session_state.sh:
             try:
                 audit_sheet = st.session_state.sh.worksheet("Audit Log")

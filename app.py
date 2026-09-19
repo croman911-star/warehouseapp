@@ -105,7 +105,8 @@ if not st.session_state.authenticated:
             load_local_db()
             st.rerun()
         else:
-            st.error("Incorrect password. Default is 1234.")
+            # Removed the 1234 default message for security
+            st.error("Incorrect password.") 
     st.stop()
 
 # --- Initialize Session DB ---

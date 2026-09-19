@@ -83,17 +83,27 @@ def push_dictionary_entry(cat, model):
     except Exception:
         st.toast("⚠️ Cloud dictionary sync delayed. Saved locally.", icon="⏳")
 
+# --- User Authentication DB ---
+USER_FILE = "warehouse_users.json"
+if not os.path.exists(USER_FILE):
+    # Creates default accounts if the file doesn't exist yet
+    default_users = {"Admin": "1234", "Worker1": "1234", "Worker2": "1234"}
+    with open(USER_FILE, "w") as f:
+        json.dump(default_users, f)
+
+with open(USER_FILE, "r") as f:
+    auth_db = json.load(f)
+
 # --- Login Screen ---
 if not st.session_state.authenticated:
     st.title("Warehouse Login")
-    users = ["Admin", "Worker1", "Worker2"]
+    users = sorted(list(auth_db.keys()))
     sel_user = st.selectbox("Select User", users)
     pwd = st.text_input("Password", type="password")
-
+    
     if st.button("Login"):
-        # Expecting st.secrets["passwords"] in Streamlit Cloud
-        correct_pw = st.secrets["passwords"].get(sel_user, "1234") if "passwords" in st.secrets else "1234"
-        if pwd == correct_pw:
+        # Checks against the local users database instead of hardcoded secrets
+        if pwd == auth_db.get(sel_user):
             st.session_state.authenticated = True
             st.session_state.current_user = sel_user
             load_local_db()
@@ -539,6 +549,40 @@ if st.session_state.current_user == "Admin":
                     
             st.rerun()
 
+    with st.expander("👤 Manage Worker Accounts"):
+        st.write("Add new worker logins or remove old ones.")
+        acc_col1, acc_col2 = st.columns(2)
+        
+        with acc_col1:
+            st.markdown("**➕ Add New Account**")
+            new_u = st.text_input("New Username:", key="new_u")
+            new_p = st.text_input("New Password:", type="password", key="new_p")
+            if st.button("Create Account", type="primary"):
+                if new_u and new_p:
+                    if new_u in auth_db:
+                        st.warning("User already exists!")
+                    else:
+                        auth_db[new_u] = new_p
+                        with open(USER_FILE, "w") as f:
+                            json.dump(auth_db, f)
+                        st.success(f"Account '{new_u}' created!")
+                        st.rerun()
+                else:
+                    st.warning("Enter both a username and password.")
+                    
+        with acc_col2:
+            st.markdown("**❌ Remove Account**")
+            # Prevents you from accidentally deleting the Admin account!
+            removable_users = [u for u in auth_db.keys() if u != "Admin"]
+            del_u = st.selectbox("Select User to Remove:", ["-- Select --"] + removable_users)
+            if st.button("Delete Account"):
+                if del_u != "-- Select --":
+                    del auth_db[del_u]
+                    with open(USER_FILE, "w") as f:
+                        json.dump(auth_db, f)
+                    st.success(f"Account '{del_u}' deleted!")
+                    st.rerun()
+   
     with st.expander("🗑️ Wipe Everything"):
         st.warning("🚨 DANGER: This permanently erases all your models and counts locally.")
         st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")

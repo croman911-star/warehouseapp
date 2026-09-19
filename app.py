@@ -514,18 +514,31 @@ if st.session_state.current_user == "Admin":
                             st.toast("⚠️ Cloud sync delayed. Saved locally.")
                     st.rerun()
 
-    with st.expander("🔄 Reset All Counts to Zero (Fresh Count)"):
+   with st.expander("🔄 Reset All Counts to Zero (Fresh Count)"):
         st.write("Start a fresh physical inventory count. This sets all quantities to 0 but **keeps your models, categories, and cloud history perfectly intact.**")
         
-        confirm_zero = st.text_input("Type ZERO to confirm:", label_visibility="collapsed", key="confirm_zero")
+        # --- NEW: Simple Checkbox Confirmation ---
+        confirm_zero = st.checkbox("Are you sure? Check this box to unlock the reset button.")
         
-        if st.button("Reset All Counts", use_container_width=True, type="primary", disabled=(confirm_zero != "ZERO")):
+        if st.button("Reset All Counts", use_container_width=True, type="primary", disabled=not confirm_zero):
             st.session_state.data = {}
             st.session_state.history = [] 
             
             for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
                 try: os.remove(file)
                 except: pass
+            
+            save_local_db()
+            
+            if st.session_state.sh:
+                try:
+                    audit_sheet = st.session_state.sh.worksheet("Audit Log")
+                    full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                    audit_sheet.append_row([f"[{full_timestamp}] 🔄 SYSTEM: {st.session_state.current_user} RESET ALL INVENTORY COUNTS TO ZERO."])
+                except Exception:
+                    pass
+                    
+            st.rerun()
             
             save_local_db()
             

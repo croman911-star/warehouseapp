@@ -312,7 +312,6 @@ with btn_col4:
 
             last = st.session_state.history.pop()
             
-            # --- NEW: Removed the max(0) caps to allow flawless global balancing ---
             if last.get("action") == "Moved":
                 st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) + last["qty"]
                 st.session_state.data[last["key_to"]] = st.session_state.data.get(last["key_to"], 0) - last["qty"]
@@ -337,21 +336,15 @@ with btn_col4:
             st.info(f"↺ Undid last action for {last['model']}")
             st.rerun()
 
-st.info(f"↺ Undid last action for {last['model']}")
-            st.rerun()
-
-# VVV INSERT THIS NEW BLOCK VVV
 st.markdown("<br>", unsafe_allow_html=True)
 with st.expander("🧹 Reset My Daily Count"):
     st.write("Start a fresh slate for the day. This zeroes out **only your** personal counts.")
     confirm_my_reset = st.checkbox("I am ready to clear my board.", key="chk_my_reset")
     if st.button("Reset My Count", type="primary", disabled=not confirm_my_reset):
-        # Clears ONLY this specific worker's memory
         st.session_state.data = {}
         st.session_state.history = []
         save_local_db()
         
-        # Leaves an audit trail in the cloud
         if st.session_state.sh:
             try:
                 audit_sheet = st.session_state.sh.worksheet("Audit Log")
@@ -360,7 +353,6 @@ with st.expander("🧹 Reset My Daily Count"):
             except Exception:
                 pass
         st.rerun()
-# ^^^ END OF NEW BLOCK ^^^
 
 st.markdown("---")
 

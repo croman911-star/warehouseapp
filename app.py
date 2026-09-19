@@ -594,14 +594,16 @@ if st.session_state.current_user == "Admin":
             st.rerun()
 
     with st.expander("👤 Manage Worker Accounts"):
-        st.write("Add new worker logins or remove old ones.")
-        acc_col1, acc_col2 = st.columns(2)
+        st.write("Add, update, or remove worker logins.")
+        
+        # --- NEW: Upgraded to a 3-Column Layout ---
+        acc_col1, acc_col2, acc_col3 = st.columns(3)
         
         with acc_col1:
-            st.markdown("**➕ Add New Account**")
+            st.markdown("**➕ Add Account**")
             new_u = st.text_input("New Username:", key="new_u")
             new_p = st.text_input("New Password:", type="password", key="new_p")
-            if st.button("Create Account", type="primary"):
+            if st.button("Create", type="primary"):
                 if new_u and new_p:
                     if new_u in auth_db:
                         st.warning("User already exists!")
@@ -612,13 +614,27 @@ if st.session_state.current_user == "Admin":
                         st.success(f"Account '{new_u}' created!")
                         st.rerun()
                 else:
-                    st.warning("Enter both a username and password.")
-                    
+                    st.warning("Enter username & password.")
+
         with acc_col2:
+            st.markdown("**🔑 Change Password**")
+            upd_u = st.selectbox("Select User:", ["-- Select --"] + list(auth_db.keys()), key="upd_u")
+            upd_p = st.text_input("New Password:", type="password", key="upd_p")
+            if st.button("Update", type="primary"):
+                if upd_u != "-- Select --" and upd_p:
+                    auth_db[upd_u] = upd_p
+                    with open(USER_FILE, "w") as f:
+                        json.dump(auth_db, f)
+                    st.success(f"Password updated!")
+                    st.rerun()
+                else:
+                    st.warning("Select user & type password.")
+                    
+        with acc_col3:
             st.markdown("**❌ Remove Account**")
             removable_users = [u for u in auth_db.keys() if u != "Admin"]
-            del_u = st.selectbox("Select User to Remove:", ["-- Select --"] + removable_users)
-            if st.button("Delete Account"):
+            del_u = st.selectbox("Select User:", ["-- Select --"] + removable_users, key="del_u")
+            if st.button("Delete"):
                 if del_u != "-- Select --":
                     del auth_db[del_u]
                     with open(USER_FILE, "w") as f:

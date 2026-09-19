@@ -199,6 +199,15 @@ def modify_inventory(action_type):
 
     is_new_model = cat not in st.session_state.cloud_models or model not in st.session_state.cloud_models[cat]
 
+    # --- NEW: Calculate Global Total instantly before math ---
+    global_count = 0
+    for file in glob.glob("inventory_data_*.json"):
+        try:
+            with open(file, "r") as f:
+                od = json.load(f)
+                global_count += od.get(key, 0)
+        except: pass
+
     if action_type == "add":
         st.session_state.data[key] = st.session_state.data.get(key, 0) + qty
         st.session_state.history.append({"action": "Added", "model": model, "qty": qty, "loc": loc, "key": key})
@@ -212,21 +221,33 @@ def modify_inventory(action_type):
             push_dictionary_entry(cat, model)
 
     elif action_type == "sub":
-        st.session_state.data[key] = max(0, st.session_state.data.get(key, 0) - qty)
-        st.session_state.history.append({"action": "Removed", "model": model, "qty": qty, "loc": loc, "key": key})
-        log_msg = f"[{full_timestamp}] {st.session_state.current_user} Removed {qty} x {model} ({loc})"
+        # Caps the subtraction at the Global Total so you can't go below 0 globally
+        allowed_qty = min(qty, global_count)
+        if allowed_qty <= 0:
+            st.warning("Cannot subtract. Global inventory is already 0.")
+            return
+            
+        st.session_state.data[key] = st.session_state.data.get(key, 0) - allowed_qty
+        st.session_state.history.append({"action": "Removed", "model": model, "qty": allowed_qty, "loc": loc, "key": key})
+        log_msg = f"[{full_timestamp}] {st.session_state.current_user} Removed {allowed_qty} x {model} ({loc})"
 
     elif action_type == "move":
         if loc == loc_to:
             st.warning("Source and destination cannot be the same!")
             return
+            
+        allowed_qty = min(qty, global_count)
+        if allowed_qty <= 0:
+            st.warning("Cannot move. Source location is empty.")
+            return
+            
         key_to = f"{model}|{loc_to}"
-        st.session_state.data[key] = max(0, st.session_state.data.get(key, 0) - qty)
-        st.session_state.data[key_to] = st.session_state.data.get(key_to, 0) + qty
+        st.session_state.data[key] = st.session_state.data.get(key, 0) - allowed_qty
+        st.session_state.data[key_to] = st.session_state.data.get(key_to, 0) + allowed_qty
         st.session_state.history.append({
-            "action": "Moved", "model": model, "qty": qty, "loc": loc, "to_loc": loc_to, "key": key, "key_to": key_to
+            "action": "Moved", "model": model, "qty": allowed_qty, "loc": loc, "to_loc": loc_to, "key": key, "key_to": key_to
         })
-        log_msg = f"[{full_timestamp}] {st.session_state.current_user} Moved {qty} x {model} ({loc} ➔ {loc_to})"
+        log_msg = f"[{full_timestamp}] {st.session_state.current_user} Moved {allowed_qty} x {model} ({loc} ➔ {loc_to})"
 
     save_local_db()
 
@@ -290,12 +311,14 @@ with btn_col4:
             load_local_db()
 
             last = st.session_state.history.pop()
+            
+            # --- NEW: Removed the max(0) caps to allow flawless global balancing ---
             if last.get("action") == "Moved":
                 st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) + last["qty"]
-                st.session_state.data[last["key_to"]] = max(0, st.session_state.data.get(last["key_to"], 0) - last["qty"])
+                st.session_state.data[last["key_to"]] = st.session_state.data.get(last["key_to"], 0) - last["qty"]
             else:
                 change = last["qty"] if last["action"] == "Added" else -last["qty"]
-                st.session_state.data[last["key"]] = max(0, st.session_state.data.get(last["key"], 0) - change)
+                st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) - change
 
             save_local_db()
 

@@ -513,7 +513,34 @@ if st.session_state.current_user == "Admin":
                         except Exception as e:
                             st.toast("⚠️ Cloud sync delayed. Saved locally.")
                     st.rerun()
-
+with st.expander("🔄 Reset All Counts to Zero (Fresh Count)"):
+        st.write("Start a fresh physical inventory count. This sets all quantities to 0 but **keeps your models, categories, and cloud history perfectly intact.**")
+        
+        confirm_zero = st.text_input("Type ZERO to confirm:", label_visibility="collapsed", key="confirm_zero")
+        
+        if st.button("Reset All Counts", use_container_width=True, type="primary", disabled=(confirm_zero != "ZERO")):
+            # 1. Clear local counts in memory
+            st.session_state.data = {}
+            st.session_state.history = [] 
+            
+            # 2. Erase the local JSON files to zero everyone out
+            for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
+                try: os.remove(file)
+                except: pass
+            
+            # 3. Create fresh empty files
+            save_local_db()
+            
+            # 4. Punch a permanent record into the Cloud Audit Log
+            if st.session_state.sh:
+                try:
+                    audit_sheet = st.session_state.sh.worksheet("Audit Log")
+                    full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                    audit_sheet.append_row([f"[{full_timestamp}] 🔄 SYSTEM: {st.session_state.current_user} RESET ALL INVENTORY COUNTS TO ZERO."])
+                except Exception:
+                    pass
+                    
+            st.rerun()
     with st.expander("🗑️ Wipe Everything"):
         st.warning("🚨 DANGER: This permanently erases all your models and counts locally.")
         st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")

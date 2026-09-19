@@ -308,33 +308,40 @@ with btn_col4:
         if not st.session_state.history:
             st.warning("Nothing to undo!")
         else:
+            # 1. Read the absolute latest files from the disk
             load_local_db()
 
-            last = st.session_state.history.pop()
-            
-            if last.get("action") == "Moved":
-                st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) + last["qty"]
-                st.session_state.data[last["key_to"]] = st.session_state.data.get(last["key_to"], 0) - last["qty"]
+            # --- NEW SAFETY CATCH ---
+            # 2. Check AGAIN to make sure a Reset didn't just wipe the history file!
+            if not st.session_state.history:
+                st.warning("The board is fresh! Nothing to undo.")
             else:
-                change = last["qty"] if last["action"] == "Added" else -last["qty"]
-                st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) - change
+                last = st.session_state.history.pop()
+                
+                # We do not use max(0) here so the global balance remains flawless
+                if last.get("action") == "Moved":
+                    st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) + last["qty"]
+                    st.session_state.data[last["key_to"]] = st.session_state.data.get(last["key_to"], 0) - last["qty"]
+                else:
+                    change = last["qty"] if last["action"] == "Added" else -last["qty"]
+                    st.session_state.data[last["key"]] = st.session_state.data.get(last["key"], 0) - change
 
-            save_local_db()
+                save_local_db()
 
-            if st.session_state.sh:
-                try:
-                    audit_sheet = st.session_state.sh.worksheet("Audit Log")
-                    full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
-                    if last.get("action") == "Moved":
-                        undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed move of {last['qty']} x {last['model']} ({last['loc']} ➔ {last.get('to_loc')})"
-                    else:
-                        undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed {last['action'].lower()} of {last['qty']} x {last['model']} ({last['loc']})"
-                    audit_sheet.append_row([undo_msg])
-                except Exception:
-                    st.toast("⚠️ Cloud sync delayed. Saved locally.", icon="⏳")
+                if st.session_state.sh:
+                    try:
+                        audit_sheet = st.session_state.sh.worksheet("Audit Log")
+                        full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                        if last.get("action") == "Moved":
+                            undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed move of {last['qty']} x {last['model']} ({last['loc']} ➔ {last.get('to_loc')})"
+                        else:
+                            undo_msg = f"[{full_timestamp}] ↺ UNDO: {st.session_state.current_user} reversed {last['action'].lower()} of {last['qty']} x {last['model']} ({last['loc']})"
+                        audit_sheet.append_row([undo_msg])
+                    except Exception:
+                        st.toast("⚠️ Cloud sync delayed. Saved locally.", icon="⏳")
 
-            st.info(f"↺ Undid last action for {last['model']}")
-            st.rerun()
+                st.info(f"↺ Undid last action for {last['model']}")
+                st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)
 with st.expander("🧹 Reset My Daily Count"):

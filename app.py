@@ -26,6 +26,16 @@ if "authenticated" not in st.session_state:
 if "current_user" not in st.session_state:
     st.session_state.current_user = None
 
+# --- User Authentication DB ---
+USER_FILE = "warehouse_users.json"
+if not os.path.exists(USER_FILE):
+    default_users = {"Admin": "1234", "Worker1": "1234", "Worker2": "1234"}
+    with open(USER_FILE, "w") as f:
+        json.dump(default_users, f)
+
+with open(USER_FILE, "r") as f:
+    auth_db = json.load(f)
+
 # --- Helper: File Paths & Atomic DB Ops ---
 def get_data_file():
     return f"inventory_data_{st.session_state.current_user}.json"
@@ -69,8 +79,6 @@ def save_local_db():
         except Exception: pass
 
 def push_dictionary_entry(cat, model):
-    """Push a single new category/model pair to the cloud Dictionary immediately,
-    so other sessions don't lose it to the Apk-sweep before the next manual sync."""
     if not st.session_state.sh:
         return
     try:
@@ -83,33 +91,21 @@ def push_dictionary_entry(cat, model):
     except Exception:
         st.toast("⚠️ Cloud dictionary sync delayed. Saved locally.", icon="⏳")
 
-# --- User Authentication DB ---
-USER_FILE = "warehouse_users.json"
-if not os.path.exists(USER_FILE):
-    # Creates default accounts if the file doesn't exist yet
-    default_users = {"Admin": "1234", "Worker1": "1234", "Worker2": "1234"}
-    with open(USER_FILE, "w") as f:
-        json.dump(default_users, f)
-
-with open(USER_FILE, "r") as f:
-    auth_db = json.load(f)
-
 # --- Login Screen ---
 if not st.session_state.authenticated:
     st.title("Warehouse Login")
     users = sorted(list(auth_db.keys()))
     sel_user = st.selectbox("Select User", users)
     pwd = st.text_input("Password", type="password")
-    
+
     if st.button("Login"):
-        # Checks against the local users database instead of hardcoded secrets
         if pwd == auth_db.get(sel_user):
             st.session_state.authenticated = True
             st.session_state.current_user = sel_user
             load_local_db()
             st.rerun()
         else:
-            st.error("Incorrect password.")
+            st.error("Incorrect password. Default is 1234.")
     st.stop()
 
 # --- Initialize Session DB ---
@@ -179,7 +175,6 @@ for file in glob.glob("inventory_data_*.json"):
             master_data[k] = master_data.get(k, 0) + v
     except: pass
 
-# FIX 2: Combine local JSON models with Cloud Dictionary models so Admin can see everything
 unique_models = set([k.split("|")[0] for k in master_data.keys()])
 for models_in_cat in st.session_state.cloud_models.values():
     unique_models.update(models_in_cat)
@@ -187,7 +182,6 @@ for models_in_cat in st.session_state.cloud_models.values():
 LOCATIONS = ["Warehouse", "Assembly", "Suspect"]
 
 def modify_inventory(action_type):
-    # DELTA INTERCEPT: Refresh memory from disk instantly before modifying
     load_local_db()
 
     cat = st.session_state.get("cat_sel")
@@ -236,7 +230,6 @@ def modify_inventory(action_type):
 
     save_local_db()
 
-    # Send Audit Log with Toast fallback
     if st.session_state.sh:
         try:
             audit_sheet = st.session_state.sh.worksheet("Audit Log")
@@ -248,7 +241,6 @@ def modify_inventory(action_type):
 categories = sorted(list(st.session_state.cloud_models.keys()))
 cat_opts = categories + (["➕ Add New Category"] if st.session_state.current_user == "Admin" else [])
 
-# FIX 1: Added "_raw" to the key so Streamlit doesn't crash when we update the real cat_sel state
 cat_sel = st.selectbox("Category:", cat_opts, key="cat_sel_raw")
 
 if cat_sel == "➕ Add New Category":
@@ -258,7 +250,6 @@ if cat_sel == "➕ Add New Category":
         if cat_sel not in st.session_state.cloud_models:
             st.session_state.cloud_models[cat_sel] = set()
 
-# Lock the final resolved category into memory safely
 st.session_state.cat_sel = cat_sel
 
 mods_for_cat = sorted(list(st.session_state.cloud_models.get(cat_sel, [])))
@@ -266,7 +257,6 @@ mod_opts = ["-- Select --"] + mods_for_cat + ["➕ ADD NEW MODEL"]
 
 mod_sel = st.selectbox("Model Selection:", mod_opts, key="mod_sel_raw")
 if mod_sel == "➕ ADD NEW MODEL":
-    # Silently converts any illegal | symbol into a safe - dash
     mod_sel = st.text_input("Enter New Model Number:").strip().replace("|", "-")
 st.session_state.mod_sel = mod_sel
 
@@ -297,7 +287,6 @@ with btn_col4:
         if not st.session_state.history:
             st.warning("Nothing to undo!")
         else:
-            # DELTA INTERCEPT
             load_local_db()
 
             last = st.session_state.history.pop()
@@ -310,7 +299,6 @@ with btn_col4:
 
             save_local_db()
 
-            # Undo Cloud Punch-Through
             if st.session_state.sh:
                 try:
                     audit_sheet = st.session_state.sh.worksheet("Audit Log")
@@ -381,11 +369,9 @@ if not df_master.empty:
         for cat_name in df_master["_HiddenCat"].unique():
             cat_df = df_master[df_master["_HiddenCat"] == cat_name].drop(columns=["_HiddenCat"])
             
-            # Strips out characters that corrupt Excel files
             safe_sheet_name = re.sub(r'[\\/*?:\[\]]', '', str(cat_name))[:31]
             cat_df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
 
-            # Auto-adjust column widths
             worksheet = writer.sheets[safe_sheet_name]
             for col in worksheet.columns:
                 max_length = max(len(str(cell.value)) for cell in col) + 2
@@ -406,7 +392,6 @@ if st.session_state.current_user == "Admin":
         if st.button("☁️ Sync to Google Sheets", type="primary", use_container_width=True):
             if st.session_state.sh:
                 try:
-                    # 1. Update Snapshot
                     snap_sheet = st.session_state.sh.worksheet("Snapshots")
                     snap_data = []
                     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -415,7 +400,6 @@ if st.session_state.current_user == "Admin":
                     if snap_data:
                         snap_sheet.append_rows(snap_data)
 
-                    # 2. Update Dictionary
                     dict_sheet = st.session_state.sh.worksheet("Dictionary")
                     dict_sheet.clear()
                     dict_upload = [["Category", "Model"]]

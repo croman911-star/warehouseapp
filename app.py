@@ -14,21 +14,18 @@ st.set_page_config(page_title="Warehouse System", layout="wide", initial_sidebar
 # --- Mobile-First CSS Polish ---
 st.markdown("""
 <style>
-    /* Remove wasted top padding on mobile screens */
     .block-container {
         padding-top: 1.2rem !important;
         padding-bottom: 2rem !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
     }
-    /* Make action buttons tall and thumb-friendly */
     div.stButton > button {
         min-height: 52px;
         font-weight: 700 !important;
         border-radius: 10px !important;
         font-size: 1rem !important;
     }
-    /* Live stock badge styling */
     .stock-pill {
         background: rgba(31, 119, 180, 0.12);
         border-left: 4px solid #1f77b4;
@@ -38,7 +35,6 @@ st.markdown("""
         margin-bottom: 12px;
         font-size: 0.95rem;
     }
-    /* Tighten horizontal radio buttons for single-tap location selection */
     div[role="radiogroup"] {
         gap: 0.5rem !important;
     }
@@ -62,7 +58,6 @@ def atomic_write_json(filepath, data_obj):
 
 # --- Password Hashing Helper ---
 def hash_password(pwd_str):
-    """Hashes a password using SHA-256. Leaves already-hashed 64-char hex strings untouched."""
     pwd_str = str(pwd_str).strip()
     if len(pwd_str) == 64 and all(c in "0123456789abcdef" for c in pwd_str.lower()):
         return pwd_str.lower()
@@ -78,7 +73,7 @@ if "gc" not in st.session_state or "sh" not in st.session_state:
         st.session_state.gc = None
         st.session_state.sh = None
 
-# --- Worksheet Caching Helper (Prevents 429 Rate Limits & Button Lag) ---
+# --- Worksheet Caching Helper ---
 def get_cached_worksheet(title, rows="2000", cols="2", header=None):
     if not st.session_state.sh:
         return None
@@ -95,7 +90,7 @@ def get_cached_worksheet(title, rows="2000", cols="2", header=None):
         st.session_state[cache_key] = ws
     return st.session_state[cache_key]
 
-# --- Cloud Persistence Helpers (Survive Streamlit Reboots) ---
+# --- Cloud Persistence Helpers ---
 def sync_users_to_cloud(users_dict):
     u_sheet = get_cached_worksheet("Users_DB", rows="100", cols="2", header=["Username", "Password_Hash"])
     if not u_sheet:
@@ -127,7 +122,16 @@ def load_users_from_cloud():
 
 def get_global_master_data():
     master = {}
+    if os.path.exists(SYSTEM_BASE_FILE):
+        try:
+            with open(SYSTEM_BASE_FILE, "r") as f:
+                master.update(json.load(f))
+        except Exception:
+            pass
+
     for file in glob.glob("inventory_data_*.json"):
+        if file == SYSTEM_BASE_FILE:
+            continue
         try:
             with open(file, "r") as f:
                 od = json.load(f)
@@ -138,7 +142,6 @@ def get_global_master_data():
     return master
 
 def backup_live_state_to_cloud(force=False):
-    """Backs up live counts using a single API call, throttled to prevent Google 429 errors."""
     l_sheet = get_cached_worksheet("Live_State", rows="2000", cols="2", header=["Key", "Qty"])
     if not l_sheet:
         return
@@ -215,7 +218,6 @@ if "login_attempts" not in st.session_state:
 
 restore_live_state_if_needed()
 
-# Initialize User Authentication DB (Local + Cloud Recovery + Auto-Hash Migration)
 if not os.path.exists(USER_FILE):
     cloud_users = load_users_from_cloud()
     if cloud_users:
@@ -277,7 +279,6 @@ def save_local_db():
     atomic_write_json(get_hist_file(), st.session_state.history)
 
 def consolidate_user_files(target_user):
-    """Safely rolls any user's net counts into SYSTEM_BASE before shift reset or account deletion."""
     u_data_file = get_data_file(target_user)
     u_hist_file = get_hist_file(target_user)
 
@@ -372,7 +373,6 @@ if not st.session_state.authenticated:
 if "data" not in st.session_state:
     load_local_db()
 
-# Handle Post-Action Quantity Reset
 if st.session_state.get("_reset_qty", False):
     st.session_state.qty_input = 1
     st.session_state._reset_qty = False
@@ -421,7 +421,6 @@ for k in st.session_state.data.keys():
     if not found:
         st.session_state.cloud_models["Apk"].add(m)
 
-# --- Clean Up Empty Categories ---
 keys_to_del = [
     c for c, mods in st.session_state.cloud_models.items()
     if not mods and c != "Apk" and c != st.session_state.get("cat_sel")
@@ -543,7 +542,7 @@ if not df_master.empty:
 
 categories = sorted(list(st.session_state.cloud_models.keys()))
 
-# --- Workspace Navigation (Tabs for Admin, Direct View for Workers) ---
+# --- Workspace Navigation ---
 if st.session_state.current_user == "Admin":
     tab_scanner, tab_dashboard, tab_admin = st.tabs(["📦 Floor Scanner", "🦅 Eagle Eye", "⚙️ System Tools"])
 else:
@@ -576,7 +575,6 @@ with tab_scanner:
             mod_sel = st.text_input("Enter New Model Number:").strip().upper().replace("|", "-")
         st.session_state.mod_sel = mod_sel
 
-    # --- Live Stock Pill (Instant Confirmation Before Tapping) ---
     if mod_sel and mod_sel != "-- Select --" and mod_sel != "➕ ADD NEW MODEL":
         cur_w = max(0, master_data.get(f"{mod_sel}|Warehouse", 0))
         cur_a = max(0, master_data.get(f"{mod_sel}|Assembly", 0))
@@ -588,7 +586,6 @@ with tab_scanner:
             unsafe_allow_html=True
         )
 
-    # --- Quantity & Single-Tap Location Controls ---
     q_col, l_col1, l_col2 = st.columns([1, 2, 2])
     with q_col:
         st.number_input("Quantity:", min_value=1, value=1, step=1, key="qty_input")
@@ -597,7 +594,6 @@ with tab_scanner:
     with l_col2:
         st.radio("Move Destination (Move Only):", LOCATIONS, index=1, horizontal=True, key="loc_to_sel")
 
-    # --- 2x2 Thumb-Zone Action Grid ---
     row1_col1, row1_col2 = st.columns(2)
     with row1_col1:
         if st.button("➕ ADD", use_container_width=True, type="primary"):
@@ -641,7 +637,6 @@ with tab_scanner:
                 st.info(f"↺ Undid last action for {last['model']}")
                 st.rerun()
 
-    # --- Worker Personal Activity, Shift Reset & Self-Service Password ---
     p_col1, p_col2, p_col3 = st.columns(3)
 
     with p_col1:
@@ -661,7 +656,7 @@ with tab_scanner:
             confirm_my_reset = st.checkbox("I am ready to clear my shift board.", key="chk_my_reset")
             if st.button("Reset My Shift Board", type="primary", disabled=not confirm_my_reset):
                 consolidate_worker_ledger()
-                st.session_state.chk_my_reset = False
+                st.session_state.pop("chk_my_reset", None)
 
                 full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
                 append_audit_log(f"[{full_timestamp}] 🧹 SHIFT RESET: {st.session_state.current_user} consolidated and cleared their personal shift board.")
@@ -868,7 +863,7 @@ if tab_admin is not None:
 
                 save_local_db()
                 backup_live_state_to_cloud(force=True)
-                st.session_state.chk_admin_zero = False
+                st.session_state.pop("chk_admin_zero", None)
 
                 full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
                 append_audit_log(f"[{full_timestamp}] 🔄 SYSTEM: {st.session_state.current_user} RESET ALL INVENTORY COUNTS TO ZERO.")
@@ -899,7 +894,7 @@ if tab_admin is not None:
             with acc_col2:
                 st.markdown("**🔑 Change Password**")
                 upd_u = st.selectbox("Select User:", ["-- Select --"] + sorted(list(auth_db.keys())), key="upd_u")
-                upd_p = st.text_input("New Password:", type="password", key="upd_p")
+                upd_p = st.text_input("New Password:", type="password", key="new_p")
                 if st.button("Update", type="primary"):
                     if upd_u != "-- Select --" and upd_p:
                         auth_db[upd_u] = hash_password(upd_p)

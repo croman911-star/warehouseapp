@@ -7,6 +7,7 @@ import pandas as pd
 import gspread
 import io
 import re
+import hashlib
 
 st.set_page_config(page_title="Warehouse System", layout="wide")
 
@@ -24,6 +25,14 @@ def atomic_write_json(filepath, data_obj):
         os.replace(tmp, filepath)
     except Exception:
         pass
+
+# --- Password Hashing Helper ---
+def hash_password(pwd_str):
+    """Hashes a password using SHA-256. Leaves already-hashed 64-char hex strings untouched."""
+    pwd_str = str(pwd_str).strip()
+    if len(pwd_str) == 64 and all(c in "0123456789abcdef" for c in pwd_str.lower()):
+        return pwd_str.lower()
+    return hashlib.sha256(pwd_str.encode("utf-8")).hexdigest()
 
 # --- API Caching (Stop Hammering Google) ---
 if "gc" not in st.session_state or "sh" not in st.session_state:
@@ -45,7 +54,7 @@ def sync_users_to_cloud(users_dict):
         except gspread.exceptions.WorksheetNotFound:
             u_sheet = st.session_state.sh.add_worksheet(title="Users_DB", rows="100", cols="2")
         u_sheet.clear()
-        rows = [["Username", "Password"]] + [[str(u), str(p)] for u, p in users_dict.items()]
+        rows = [["Username", "Password_Hash"]] + [[str(u), hash_password(p)] for u, p in users_dict.items()]
         u_sheet.update(values=rows, range_name="A1")
     except Exception:
         pass
@@ -59,9 +68,9 @@ def load_users_from_cloud():
         loaded = {}
         for r in records:
             u = str(r.get("Username", "")).strip()
-            p = str(r.get("Password", "")).strip()
+            p = str(r.get("Password_Hash", r.get("Password", ""))).strip()
             if u and p:
-                loaded[u] = p
+                loaded[u] = hash_password(p)
         if "Admin" in loaded:
             return loaded
     except Exception:
@@ -96,7 +105,6 @@ def backup_live_state_to_cloud():
         pass
 
 def restore_live_state_if_needed():
-    # If local disk was wiped by a Streamlit reboot, restore from Cloud Live_State
     if glob.glob("inventory_data_*.json") or not st.session_state.sh:
         return
     try:
@@ -118,32 +126,44 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "current_user" not in st.session_state:
     st.session_state.current_user = None
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
 
-# Restore counts if container freshly rebooted
 restore_live_state_if_needed()
 
-# Initialize User Authentication DB (Local + Cloud Recovery)
+# Initialize User Authentication DB (Local + Cloud Recovery + Auto-Hash Migration)
 if not os.path.exists(USER_FILE):
     cloud_users = load_users_from_cloud()
     if cloud_users:
         atomic_write_json(USER_FILE, cloud_users)
     else:
-        default_users = {"Admin": "1234", "Worker1": "1234", "Worker2": "1234"}
+        default_users = {
+            "Admin": hash_password("1234"),
+            "Worker1": hash_password("1234"),
+            "Worker2": hash_password("1234")
+        }
         atomic_write_json(USER_FILE, default_users)
         sync_users_to_cloud(default_users)
 
 try:
     with open(USER_FILE, "r") as f:
-        auth_db = json.load(f)
+        raw_db = json.load(f)
+    # Automatically migrate any plain-text passwords to SHA-256 hashes
+    auth_db = {u: hash_password(p) for u, p in raw_db.items()}
+    if auth_db != raw_db:
+        atomic_write_json(USER_FILE, auth_db)
+        sync_users_to_cloud(auth_db)
 except Exception:
-    auth_db = {"Admin": "1234", "Worker1": "1234", "Worker2": "1234"}
+    auth_db = {"Admin": hash_password("1234")}
 
 # --- Helper: File Paths & Atomic DB Ops ---
-def get_data_file():
-    return f"inventory_data_{st.session_state.current_user}.json"
+def get_data_file(username=None):
+    u = username or st.session_state.current_user
+    return f"inventory_data_{u}.json"
 
-def get_hist_file():
-    return f"inventory_history_{st.session_state.current_user}.json"
+def get_hist_file(username=None):
+    u = username or st.session_state.current_user
+    return f"inventory_history_{u}.json"
 
 def load_local_db():
     if not st.session_state.authenticated:
@@ -173,36 +193,53 @@ def save_local_db():
     atomic_write_json(get_data_file(), st.session_state.data)
     atomic_write_json(get_hist_file(), st.session_state.history)
 
-def consolidate_worker_ledger():
-    """Rolls a worker's personal net counts into SYSTEM_BASE so resetting their shift never alters warehouse stock."""
-    load_local_db()
-    base_data = {}
-    if os.path.exists(SYSTEM_BASE_FILE):
+def consolidate_user_files(target_user):
+    """Safely rolls any user's net counts into SYSTEM_BASE before shift reset or account deletion."""
+    u_data_file = get_data_file(target_user)
+    u_hist_file = get_hist_file(target_user)
+
+    user_counts = {}
+    if os.path.exists(u_data_file):
         try:
-            with open(SYSTEM_BASE_FILE, "r") as f:
-                base_data = json.load(f)
+            with open(u_data_file, "r") as f:
+                user_counts = json.load(f)
         except Exception:
-            base_data = {}
+            user_counts = {}
 
-    for k, v in st.session_state.data.items():
-        base_data[k] = base_data.get(k, 0) + v
-        if base_data[k] <= 0:
-            del base_data[k]
+    if user_counts:
+        base_data = {}
+        if os.path.exists(SYSTEM_BASE_FILE):
+            try:
+                with open(SYSTEM_BASE_FILE, "r") as f:
+                    base_data = json.load(f)
+            except Exception:
+                base_data = {}
 
-    atomic_write_json(SYSTEM_BASE_FILE, base_data)
+        for k, v in user_counts.items():
+            base_data[k] = base_data.get(k, 0) + v
+            if base_data[k] <= 0:
+                del base_data[k]
 
-    st.session_state.data = {}
-    st.session_state.history = []
+        atomic_write_json(SYSTEM_BASE_FILE, base_data)
+
     try:
-        os.remove(get_data_file())
+        os.remove(u_data_file)
     except Exception:
         pass
     try:
-        os.remove(get_hist_file())
+        os.remove(u_hist_file)
     except Exception:
         pass
-    save_local_db()
+
+    if target_user == st.session_state.current_user:
+        st.session_state.data = {}
+        st.session_state.history = []
+        save_local_db()
+
     backup_live_state_to_cloud()
+
+def consolidate_worker_ledger():
+    consolidate_user_files(st.session_state.current_user)
 
 def push_dictionary_entry(cat, model):
     if not st.session_state.sh:
@@ -217,20 +254,30 @@ def push_dictionary_entry(cat, model):
     except Exception:
         st.toast("⚠️ Cloud dictionary sync delayed. Saved locally.", icon="⏳")
 
-# --- Login Screen ---
+# --- Login Screen (Form-Enabled for Enter Key Submit) ---
 if not st.session_state.authenticated:
     st.title("Warehouse Login")
     users = sorted(list(auth_db.keys()))
-    sel_user = st.selectbox("Select User", users)
-    pwd = st.text_input("Password", type="password")
 
-    if st.button("Login", type="primary"):
-        if pwd == auth_db.get(sel_user):
+    with st.form("login_form"):
+        sel_user = st.selectbox("Select User", users)
+        pwd = st.text_input("Password", type="password")
+        submit_login = st.form_submit_button("Login", type="primary")
+
+    if submit_login:
+        hashed_input = hash_password(pwd)
+        # Optional emergency master key in secrets.toml: admin_master_key = "your_recovery_phrase"
+        master_recovery = st.secrets.get("admin_master_key", None)
+        is_master_override = (sel_user == "Admin" and master_recovery and pwd == str(master_recovery))
+
+        if hashed_input == auth_db.get(sel_user) or is_master_override:
             st.session_state.authenticated = True
             st.session_state.current_user = sel_user
+            st.session_state.login_attempts = 0
             load_local_db()
             st.rerun()
         else:
+            st.session_state.login_attempts += 1
             st.error("Incorrect password.")
     st.stop()
 
@@ -462,12 +509,12 @@ with btn_col4:
             st.info(f"↺ Undid last action for {last['model']}")
             st.rerun()
 
-# --- Worker Personal Activity & Safe Shift Reset ---
+# --- Worker Personal Activity, Shift Reset & Self-Service Password ---
 st.markdown("<br>", unsafe_allow_html=True)
-p_col1, p_col2 = st.columns(2)
+p_col1, p_col2, p_col3 = st.columns(3)
 
 with p_col1:
-    with st.expander("📋 My Shift Activity (Last 5 Actions)"):
+    with st.expander("📋 My Shift Activity (Last 5)"):
         if not st.session_state.history:
             st.caption("No actions recorded on your board this shift.")
         else:
@@ -479,7 +526,7 @@ with p_col1:
 
 with p_col2:
     with st.expander("🧹 Reset My Daily Count"):
-        st.write("Start a fresh shift slate. This clears **your personal shift activity and Undo history** while keeping the warehouse master stock intact.")
+        st.write("Start a fresh shift slate. Clears **your personal shift activity and Undo history** while keeping warehouse master stock intact.")
         confirm_my_reset = st.checkbox("I am ready to clear my shift board.", key="chk_my_reset")
         if st.button("Reset My Shift Board", type="primary", disabled=not confirm_my_reset):
             consolidate_worker_ledger()
@@ -493,6 +540,22 @@ with p_col2:
                 except Exception:
                     pass
             st.rerun()
+
+with p_col3:
+    with st.expander("🔒 Change My Password"):
+        cur_p = st.text_input("Current Password:", type="password", key="self_cur_p")
+        new_self_p = st.text_input("New Password:", type="password", key="self_new_p")
+        if st.button("Update My Password"):
+            if cur_p and new_self_p:
+                if hash_password(cur_p) == auth_db.get(st.session_state.current_user):
+                    auth_db[st.session_state.current_user] = hash_password(new_self_p)
+                    atomic_write_json(USER_FILE, auth_db)
+                    sync_users_to_cloud(auth_db)
+                    st.success("Your password has been updated!")
+                else:
+                    st.error("Current password incorrect.")
+            else:
+                st.warning("Fill out both fields.")
 
 st.markdown("---")
 
@@ -739,7 +802,7 @@ if st.session_state.current_user == "Admin":
             st.rerun()
 
     with st.expander("👤 Manage Worker Accounts"):
-        st.write("Add, update, or remove worker logins.")
+        st.write("Add, update, or remove worker logins. Passwords are encrypted with SHA-256.")
         acc_col1, acc_col2, acc_col3 = st.columns(3)
 
         with acc_col1:
@@ -751,7 +814,7 @@ if st.session_state.current_user == "Admin":
                     if new_u in auth_db or new_u == "_SYSTEM_BASE_":
                         st.warning("User already exists or name is reserved!")
                     else:
-                        auth_db[new_u] = new_p
+                        auth_db[new_u] = hash_password(new_p)
                         atomic_write_json(USER_FILE, auth_db)
                         sync_users_to_cloud(auth_db)
                         st.success(f"Account '{new_u}' created!")
@@ -765,10 +828,10 @@ if st.session_state.current_user == "Admin":
             upd_p = st.text_input("New Password:", type="password", key="upd_p")
             if st.button("Update", type="primary"):
                 if upd_u != "-- Select --" and upd_p:
-                    auth_db[upd_u] = upd_p
+                    auth_db[upd_u] = hash_password(upd_p)
                     atomic_write_json(USER_FILE, auth_db)
                     sync_users_to_cloud(auth_db)
-                    st.success("Password updated!")
+                    st.success("Password updated & encrypted!")
                     st.rerun()
                 else:
                     st.warning("Select user & type password.")
@@ -779,10 +842,12 @@ if st.session_state.current_user == "Admin":
             del_u = st.selectbox("Select User:", ["-- Select --"] + removable_users, key="del_u")
             if st.button("Delete"):
                 if del_u != "-- Select --":
+                    # Consolidate their inventory into SYSTEM_BASE before deleting their files!
+                    consolidate_user_files(del_u)
                     del auth_db[del_u]
                     atomic_write_json(USER_FILE, auth_db)
                     sync_users_to_cloud(auth_db)
-                    st.success(f"Account '{del_u}' deleted!")
+                    st.success(f"Account '{del_u}' removed and their counts merged into master stock!")
                     st.rerun()
 
     with st.expander("🗑️ Wipe Everything"):

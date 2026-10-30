@@ -852,4 +852,95 @@ if tab_admin is not None:
                                         dict_upload.append([c, m_val])
                                 dict_sheet.update(values=dict_upload, range_name="A1")
                                 st.success(f"✅ '{model_to_delete}' completely erased from counts and dictionary!")
-                            except
+                            except Exception:
+                                st.toast("⚠️ Cloud sync delayed. Saved locally.")
+                        st.rerun()
+
+        with st.expander("🔄 Reset All Counts to Zero (Fresh Count)"):
+            st.write("Start a fresh physical inventory count. This sets all quantities across the entire warehouse to 0 but **keeps your models, categories, and cloud history perfectly intact.**")
+
+            confirm_zero = st.checkbox("Are you sure? Check this box to unlock the reset button.", key="chk_admin_zero")
+
+            if st.button("Reset All Counts", use_container_width=True, type="primary", disabled=not confirm_zero, key="btn_admin_zero"):
+                st.session_state.data = {}
+                st.session_state.history = []
+
+                for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
+                    try:
+                        os.remove(file)
+                    except Exception:
+                        pass
+
+                save_local_db()
+                backup_live_state_to_cloud(force=True)
+                st.session_state._clear_admin_zero_chk = True
+
+                full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                append_audit_log(f"[{full_timestamp}] 🔄 SYSTEM: {st.session_state.current_user} RESET ALL INVENTORY COUNTS TO ZERO.")
+
+                st.rerun()
+
+        with st.expander("👤 Manage Worker Accounts"):
+            st.write("Add, update, or remove worker logins. Passwords are encrypted with SHA-256.")
+            acc_col1, acc_col2, acc_col3 = st.columns(3)
+
+            with acc_col1:
+                st.markdown("**➕ Add Account**")
+                new_u = st.text_input("New Username:", key="new_u").strip()
+                new_p = st.text_input("New Password:", type="password", key="new_p")
+                if st.button("Create", type="primary", key="btn_acc_create"):
+                    if new_u and new_p:
+                        if new_u in auth_db or new_u == "_SYSTEM_BASE_":
+                            st.warning("User already exists or name is reserved!")
+                        else:
+                            auth_db[new_u] = hash_password(new_p)
+                            atomic_write_json(USER_FILE, auth_db)
+                            sync_users_to_cloud(auth_db)
+                            st.success(f"Account '{new_u}' created!")
+                            st.rerun()
+                    else:
+                        st.warning("Enter username & password.")
+
+            with acc_col2:
+                st.markdown("**🔑 Change Password**")
+                upd_u = st.selectbox("Select User:", ["-- Select --"] + sorted(list(auth_db.keys())), key="upd_u")
+                upd_p = st.text_input("New Password:", type="password", key="upd_p")
+                if st.button("Update", type="primary", key="btn_acc_update"):
+                    if upd_u != "-- Select --" and upd_p:
+                        auth_db[upd_u] = hash_password(upd_p)
+                        atomic_write_json(USER_FILE, auth_db)
+                        sync_users_to_cloud(auth_db)
+                        st.success("Password updated & encrypted!")
+                        st.rerun()
+                    else:
+                        st.warning("Select user & type password.")
+
+            with acc_col3:
+                st.markdown("**❌ Remove Account**")
+                removable_users = sorted([u for u in auth_db.keys() if u != "Admin"])
+                del_u = st.selectbox("Select User:", ["-- Select --"] + removable_users, key="del_u")
+                if st.button("Delete", key="btn_acc_delete"):
+                    if del_u != "-- Select --":
+                        consolidate_user_files(del_u)
+                        del auth_db[del_u]
+                        atomic_write_json(USER_FILE, auth_db)
+                        sync_users_to_cloud(auth_db)
+                        st.success(f"Account '{del_u}' removed and their counts merged into master stock!")
+                        st.rerun()
+
+        with st.expander("🗑️ Wipe Everything"):
+            st.warning("🚨 DANGER: This permanently erases all local counts and models.")
+            st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")
+            confirm_wipe = st.text_input("Confirmation text", label_visibility="collapsed", key="wipe_confirm_input")
+            if st.button("Yes, Wipe My Data", use_container_width=True, type="primary", disabled=(confirm_wipe != "WIPE EVERYTHING"), key="btn_wipe_all"):
+                st.session_state.data = {}
+                st.session_state.history = []
+                st.session_state.cloud_models = {"Apk": set()}
+                for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
+                    try:
+                        os.remove(file)
+                    except Exception:
+                        pass
+                save_local_db()
+                backup_live_state_to_cloud(force=True)
+                st.rerun()

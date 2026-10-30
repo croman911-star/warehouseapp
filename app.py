@@ -349,8 +349,8 @@ if not st.session_state.authenticated:
     users = sorted(list(auth_db.keys()))
 
     with st.form("login_form"):
-        sel_user = st.selectbox("Select Operator", users)
-        pwd = st.text_input("PIN / Password", type="password")
+        sel_user = st.selectbox("Select Operator", users, key="login_user_sel")
+        pwd = st.text_input("PIN / Password", type="password", key="login_pwd_input")
         submit_login = st.form_submit_button("🔓 Sign In", type="primary", use_container_width=True)
 
     if submit_login:
@@ -373,9 +373,18 @@ if not st.session_state.authenticated:
 if "data" not in st.session_state:
     load_local_db()
 
+# --- Safe Pre-Widget State Resets (Prevents StreamlitWidgetAlreadyInstantiatedError) ---
 if st.session_state.get("_reset_qty", False):
     st.session_state.qty_input = 1
     st.session_state._reset_qty = False
+
+if st.session_state.get("_clear_my_reset_chk", False):
+    st.session_state.chk_my_reset = False
+    st.session_state._clear_my_reset_chk = False
+
+if st.session_state.get("_clear_admin_zero_chk", False):
+    st.session_state.chk_admin_zero = False
+    st.session_state._clear_admin_zero_chk = False
 
 # --- Cloud Dictionary Integration ---
 if "cloud_models" in st.session_state and not isinstance(st.session_state.cloud_models, dict):
@@ -433,7 +442,7 @@ top_col1, top_col2 = st.columns([3, 1])
 with top_col1:
     st.markdown(f"### 📦 Warehouse — `{st.session_state.current_user}`")
 with top_col2:
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("🚪 Logout", use_container_width=True, key="btn_logout"):
         backup_live_state_to_cloud(force=True)
         st.session_state.authenticated = False
         st.session_state.current_user = None
@@ -560,7 +569,7 @@ with tab_scanner:
     with sel_col1:
         cat_sel = st.selectbox("Category:", cat_opts, key="cat_sel_raw")
         if cat_sel == "➕ Add New Category":
-            new_cat = st.text_input("Enter new category name:").strip()
+            new_cat = st.text_input("Enter new category name:", key="new_cat_input").strip()
             if new_cat:
                 cat_sel = new_cat
                 if cat_sel not in st.session_state.cloud_models:
@@ -572,7 +581,7 @@ with tab_scanner:
         mod_opts = ["-- Select --"] + mods_for_cat + ["➕ ADD NEW MODEL"]
         mod_sel = st.selectbox("Model Selection:", mod_opts, key="mod_sel_raw")
         if mod_sel == "➕ ADD NEW MODEL":
-            mod_sel = st.text_input("Enter New Model Number:").strip().upper().replace("|", "-")
+            mod_sel = st.text_input("Enter New Model Number:", key="new_mod_input").strip().upper().replace("|", "-")
         st.session_state.mod_sel = mod_sel
 
     if mod_sel and mod_sel != "-- Select --" and mod_sel != "➕ ADD NEW MODEL":
@@ -596,21 +605,21 @@ with tab_scanner:
 
     row1_col1, row1_col2 = st.columns(2)
     with row1_col1:
-        if st.button("➕ ADD", use_container_width=True, type="primary"):
+        if st.button("➕ ADD", use_container_width=True, type="primary", key="btn_add"):
             modify_inventory("add")
             st.rerun()
     with row1_col2:
-        if st.button("➖ SUB", use_container_width=True):
+        if st.button("➖ SUB", use_container_width=True, key="btn_sub"):
             modify_inventory("sub")
             st.rerun()
 
     row2_col1, row2_col2 = st.columns(2)
     with row2_col1:
-        if st.button("⇆ MOVE", use_container_width=True):
+        if st.button("⇆ MOVE", use_container_width=True, key="btn_move"):
             modify_inventory("move")
             st.rerun()
     with row2_col2:
-        if st.button("↺ Undo Last", use_container_width=True):
+        if st.button("↺ Undo Last", use_container_width=True, key="btn_undo"):
             load_local_db()
             if not st.session_state.history:
                 st.warning("The board is fresh! Nothing to undo.")
@@ -654,9 +663,9 @@ with tab_scanner:
         with st.expander("🧹 Reset My Daily Count"):
             st.write("Start a fresh shift slate. Clears **your personal shift activity and Undo history** while keeping warehouse master stock intact.")
             confirm_my_reset = st.checkbox("I am ready to clear my shift board.", key="chk_my_reset")
-            if st.button("Reset My Shift Board", type="primary", disabled=not confirm_my_reset):
+            if st.button("Reset My Shift Board", type="primary", disabled=not confirm_my_reset, key="btn_my_reset"):
                 consolidate_worker_ledger()
-                st.session_state.pop("chk_my_reset", None)
+                st.session_state._clear_my_reset_chk = True
 
                 full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
                 append_audit_log(f"[{full_timestamp}] 🧹 SHIFT RESET: {st.session_state.current_user} consolidated and cleared their personal shift board.")
@@ -666,7 +675,7 @@ with tab_scanner:
         with st.expander("🔒 Change My Password"):
             cur_p = st.text_input("Current Password:", type="password", key="self_cur_p")
             new_self_p = st.text_input("New Password:", type="password", key="self_new_p")
-            if st.button("Update My Password"):
+            if st.button("Update My Password", key="btn_self_pwd"):
                 if cur_p and new_self_p:
                     if hash_password(cur_p) == auth_db.get(st.session_state.current_user):
                         auth_db[st.session_state.current_user] = hash_password(new_self_p)
@@ -690,7 +699,8 @@ with tab_scanner:
             data=excel_bytes,
             file_name=f"Warehouse_Inventory_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True,
+            key="btn_dl_excel"
         )
     else:
         st.info("Warehouse is currently empty.")
@@ -723,7 +733,7 @@ if tab_admin is not None:
     with tab_admin:
         st.markdown("### ⚙️ System Management")
 
-        if st.button("☁️ Sync Snapshot & Dictionary to Google Sheets", type="primary", use_container_width=True):
+        if st.button("☁️ Sync Snapshot & Dictionary to Google Sheets", type="primary", use_container_width=True, key="btn_admin_sync"):
             if st.session_state.sh:
                 try:
                     if not df_master.empty:
@@ -753,7 +763,7 @@ if tab_admin is not None:
 
         with st.expander("☁️ Clear Cloud Audit Log"):
             st.write("Erase the running history from the Google Sheet (Starts fresh).")
-            if st.button("Erase Cloud Audit Log"):
+            if st.button("Erase Cloud Audit Log", key="btn_clear_audit"):
                 audit_sheet = get_cached_worksheet("Audit Log", rows="5000", cols="1", header=["Action Log"])
                 if audit_sheet:
                     try:
@@ -773,7 +783,7 @@ if tab_admin is not None:
                 target_cat = st.selectbox("Select new category:", ["-- Select --"] + categories, key="move_cat")
             with move_col3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Move", use_container_width=True, type="primary"):
+                if st.button("Move", use_container_width=True, type="primary", key="btn_move_cat"):
                     if model_to_move != "-- Select --" and target_cat != "-- Select --":
                         for c in list(st.session_state.cloud_models.keys()):
                             if model_to_move in st.session_state.cloud_models[c]:
@@ -805,7 +815,7 @@ if tab_admin is not None:
                 all_known_models = sorted(list(unique_models))
                 model_to_delete = st.selectbox("Select model:", ["-- Select --"] + all_known_models, label_visibility="collapsed", key="del_mod")
             with del_col2:
-                if st.button("Delete Model", use_container_width=True, type="primary"):
+                if st.button("Delete Model", use_container_width=True, type="primary", key="btn_del_mod"):
                     if model_to_delete and model_to_delete != "-- Select --":
                         keys_to_delete = [k for k in st.session_state.data.keys() if k.startswith(f"{model_to_delete}|")]
                         for k in keys_to_delete:
@@ -842,95 +852,4 @@ if tab_admin is not None:
                                         dict_upload.append([c, m_val])
                                 dict_sheet.update(values=dict_upload, range_name="A1")
                                 st.success(f"✅ '{model_to_delete}' completely erased from counts and dictionary!")
-                            except Exception:
-                                st.toast("⚠️ Cloud sync delayed. Saved locally.")
-                        st.rerun()
-
-        with st.expander("🔄 Reset All Counts to Zero (Fresh Count)"):
-            st.write("Start a fresh physical inventory count. This sets all quantities across the entire warehouse to 0 but **keeps your models, categories, and cloud history perfectly intact.**")
-
-            confirm_zero = st.checkbox("Are you sure? Check this box to unlock the reset button.", key="chk_admin_zero")
-
-            if st.button("Reset All Counts", use_container_width=True, type="primary", disabled=not confirm_zero):
-                st.session_state.data = {}
-                st.session_state.history = []
-
-                for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
-                    try:
-                        os.remove(file)
-                    except Exception:
-                        pass
-
-                save_local_db()
-                backup_live_state_to_cloud(force=True)
-                st.session_state.pop("chk_admin_zero", None)
-
-                full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
-                append_audit_log(f"[{full_timestamp}] 🔄 SYSTEM: {st.session_state.current_user} RESET ALL INVENTORY COUNTS TO ZERO.")
-
-                st.rerun()
-
-        with st.expander("👤 Manage Worker Accounts"):
-            st.write("Add, update, or remove worker logins. Passwords are encrypted with SHA-256.")
-            acc_col1, acc_col2, acc_col3 = st.columns(3)
-
-            with acc_col1:
-                st.markdown("**➕ Add Account**")
-                new_u = st.text_input("New Username:", key="new_u").strip()
-                new_p = st.text_input("New Password:", type="password", key="new_p")
-                if st.button("Create", type="primary"):
-                    if new_u and new_p:
-                        if new_u in auth_db or new_u == "_SYSTEM_BASE_":
-                            st.warning("User already exists or name is reserved!")
-                        else:
-                            auth_db[new_u] = hash_password(new_p)
-                            atomic_write_json(USER_FILE, auth_db)
-                            sync_users_to_cloud(auth_db)
-                            st.success(f"Account '{new_u}' created!")
-                            st.rerun()
-                    else:
-                        st.warning("Enter username & password.")
-
-            with acc_col2:
-                st.markdown("**🔑 Change Password**")
-                upd_u = st.selectbox("Select User:", ["-- Select --"] + sorted(list(auth_db.keys())), key="upd_u")
-                upd_p = st.text_input("New Password:", type="password", key="new_p")
-                if st.button("Update", type="primary"):
-                    if upd_u != "-- Select --" and upd_p:
-                        auth_db[upd_u] = hash_password(upd_p)
-                        atomic_write_json(USER_FILE, auth_db)
-                        sync_users_to_cloud(auth_db)
-                        st.success("Password updated & encrypted!")
-                        st.rerun()
-                    else:
-                        st.warning("Select user & type password.")
-
-            with acc_col3:
-                st.markdown("**❌ Remove Account**")
-                removable_users = sorted([u for u in auth_db.keys() if u != "Admin"])
-                del_u = st.selectbox("Select User:", ["-- Select --"] + removable_users, key="del_u")
-                if st.button("Delete"):
-                    if del_u != "-- Select --":
-                        consolidate_user_files(del_u)
-                        del auth_db[del_u]
-                        atomic_write_json(USER_FILE, auth_db)
-                        sync_users_to_cloud(auth_db)
-                        st.success(f"Account '{del_u}' removed and their counts merged into master stock!")
-                        st.rerun()
-
-        with st.expander("🗑️ Wipe Everything"):
-            st.warning("🚨 DANGER: This permanently erases all local counts and models.")
-            st.write("To unlock the delete button, type **WIPE EVERYTHING** below:")
-            confirm_wipe = st.text_input("Confirmation text", label_visibility="collapsed")
-            if st.button("Yes, Wipe My Data", use_container_width=True, type="primary", disabled=(confirm_wipe != "WIPE EVERYTHING")):
-                st.session_state.data = {}
-                st.session_state.history = []
-                st.session_state.cloud_models = {"Apk": set()}
-                for file in glob.glob("inventory_data_*.json") + glob.glob("inventory_history_*.json"):
-                    try:
-                        os.remove(file)
-                    except Exception:
-                        pass
-                save_local_db()
-                backup_live_state_to_cloud(force=True)
-                st.rerun()
+                            except

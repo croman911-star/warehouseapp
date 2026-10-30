@@ -174,7 +174,8 @@ def restore_live_state_if_needed():
             if k and q != 0:
                 restored[k] = q
         if restored:
-            atomic_write_json(SYSTEM_BASE_FILE, restored)
+            # Restore into Admin's ledger so it can be easily cleared or managed
+            atomic_write_json("inventory_data_Admin.json", restored)
     except Exception:
         pass
 
@@ -278,7 +279,29 @@ def save_local_db():
     atomic_write_json(get_data_file(), st.session_state.data)
     atomic_write_json(get_hist_file(), st.session_state.history)
 
+def reset_worker_board_to_zero():
+    """Wipes the current worker's personal counts and undo history back to zero."""
+    st.session_state.data = {}
+    st.session_state.history = []
+    try:
+        os.remove(get_data_file())
+    except Exception:
+        pass
+    try:
+        os.remove(get_hist_file())
+    except Exception:
+        pass
+    # Also remove any legacy _SYSTEM_BASE_ file that was holding onto old counts
+    if os.path.exists(SYSTEM_BASE_FILE):
+        try:
+            os.remove(SYSTEM_BASE_FILE)
+        except Exception:
+            pass
+    save_local_db()
+    backup_live_state_to_cloud(force=True)
+
 def consolidate_user_files(target_user):
+    """Used only when an Admin deletes a user account so their stock isn't lost."""
     u_data_file = get_data_file(target_user)
     u_hist_file = get_hist_file(target_user)
 
@@ -291,20 +314,21 @@ def consolidate_user_files(target_user):
             user_counts = {}
 
     if user_counts:
-        base_data = {}
-        if os.path.exists(SYSTEM_BASE_FILE):
+        admin_file = get_data_file("Admin")
+        admin_data = {}
+        if os.path.exists(admin_file):
             try:
-                with open(SYSTEM_BASE_FILE, "r") as f:
-                    base_data = json.load(f)
+                with open(admin_file, "r") as f:
+                    admin_data = json.load(f)
             except Exception:
-                base_data = {}
+                admin_data = {}
 
         for k, v in user_counts.items():
-            base_data[k] = base_data.get(k, 0) + v
-            if base_data[k] <= 0:
-                del base_data[k]
+            admin_data[k] = admin_data.get(k, 0) + v
+            if admin_data[k] == 0:
+                del admin_data[k]
 
-        atomic_write_json(SYSTEM_BASE_FILE, base_data)
+        atomic_write_json(admin_file, admin_data)
 
     try:
         os.remove(u_data_file)
@@ -315,15 +339,10 @@ def consolidate_user_files(target_user):
     except Exception:
         pass
 
-    if target_user == st.session_state.current_user:
-        st.session_state.data = {}
-        st.session_state.history = []
-        save_local_db()
+    if st.session_state.current_user == "Admin":
+        load_local_db()
 
     backup_live_state_to_cloud(force=True)
-
-def consolidate_worker_ledger():
-    consolidate_user_files(st.session_state.current_user)
 
 def push_dictionary_entry(cat, model):
     dict_sheet = get_cached_worksheet("Dictionary", rows="1000", cols="2", header=["Category", "Model"])
@@ -373,7 +392,7 @@ if not st.session_state.authenticated:
 if "data" not in st.session_state:
     load_local_db()
 
-# --- Safe Pre-Widget State Resets (Prevents StreamlitWidgetAlreadyInstantiatedError) ---
+# --- Safe Pre-Widget State Resets ---
 if st.session_state.get("_reset_qty", False):
     st.session_state.qty_input = 1
     st.session_state._reset_qty = False
@@ -661,14 +680,14 @@ with tab_scanner:
 
     with p_col2:
         with st.expander("🧹 Reset My Daily Count"):
-            st.write("Start a fresh shift slate. Clears **your personal shift activity and Undo history** while keeping warehouse master stock intact.")
+            st.write("Start a fresh shift slate. This zeroes out **your personal counts and Undo history**.")
             confirm_my_reset = st.checkbox("I am ready to clear my shift board.", key="chk_my_reset")
             if st.button("Reset My Shift Board", type="primary", disabled=not confirm_my_reset, key="btn_my_reset"):
-                consolidate_worker_ledger()
+                reset_worker_board_to_zero()
                 st.session_state._clear_my_reset_chk = True
 
                 full_timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
-                append_audit_log(f"[{full_timestamp}] 🧹 SHIFT RESET: {st.session_state.current_user} consolidated and cleared their personal shift board.")
+                append_audit_log(f"[{full_timestamp}] 🧹 WORKER RESET: {st.session_state.current_user} zeroed out their personal shift counts.")
                 st.rerun()
 
     with p_col3:
